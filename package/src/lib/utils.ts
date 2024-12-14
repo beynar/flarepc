@@ -13,3 +13,5 @@ export const inputToSearchParams = (input: unknown) => {
 export const searchParamsToInput = (searchParams: URLSearchParams) => {
 	return JSON.parse(decodeURIComponent(searchParams.get('input') || '{}'));
 };
+
+export const WS_RESPONSE_TYPE = '#__WS_RESPONSE_TYPE_#';

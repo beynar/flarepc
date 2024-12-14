@@ -1,3 +1,4 @@
+import type { Merge } from 'type-fest';
 import {
 	Handler,
 	error,
@@ -24,7 +25,7 @@ import {
 	CronHandler,
 	getJurisdictionalNamespace,
 	DurableObjects,
-	CombinedServerOptions,
+	BooleanRoutes,
 } from '.';
 
 const isHandler = (handler: any): handler is Handler<any, any, any, any> => {
@@ -68,11 +69,30 @@ const getDurableServer = async <O extends DurableObjects>({
 	return null;
 };
 
-const executeFetch = async (
+const isPathExcluded = (event: RequestEvent, exclude?: object): boolean => {
+	if (!exclude) return false;
+	const {
+		path,
+		meta: { name },
+	} = event;
+	let isExcluded = false;
+	let current = exclude;
+
+	$: for (const segment of path) {
+		isExcluded = isExcluded || current[segment as keyof typeof current] === true;
+		current = current?.[segment as keyof typeof current] as typeof exclude;
+		if (isExcluded || !current) break $;
+	}
+
+	console.log({ name, path, exclude, isExcluded });
+	return isExcluded;
+};
+
+const executeFetch = async <O extends ServerOptions>(
 	request: Request,
 	env: Env,
 	ctx: ExecutionContext,
-	opts: ServerOptions,
+	opts: O,
 	server: string | null = null,
 ): Promise<Response> => {
 	const event = await buildEvent(request, env, ctx, opts, server);
@@ -91,6 +111,10 @@ const executeFetch = async (
 
 	let response: Response | undefined;
 	$: try {
+		// if (isPathExcluded(event, opts.exclude)) {
+		// 	throw new FLARERROR('NOT_FOUND');
+		// }
+
 		for (let handler of (opts.before || []).concat(preflight || [], createStaticServer(opts.static)) || []) {
 			response = (await handler(event)) ?? response;
 			if (response) break $;
@@ -163,8 +187,64 @@ const executeCron = async (controller: ScheduledController, env: Env, ctx: Execu
 	return handler(event);
 };
 
+// type Filters<R extends Router | undefined, O extends DurableObjects | undefined> = {
+// 	exclude?: BooleanRoutes<R, O>;
+// 	include?: BooleanRoutes<R, O>;
+// };
+
+type RecordZ<K extends keyof any> = {
+	[P in K]: ServerOptions;
+};
+type ServersOptions<S extends string = string> = RecordZ<S>;
+
+export const createServers = <S extends string, O extends ServersOptions<S>>(opts: O) => {
+	const servers = Object.keys(opts) as S[];
+
+	const crons = combineCrons(opts);
+
+	const queues = combineQueues(opts);
+
+	return {
+		async fetch(request: Request, env: Env, ctx: ExecutionContext) {
+			const server = servers.find((server) => decodeURI(request.url).includes(`[${server}]`));
+
+			if (!server || !(server in opts)) {
+				return handleError(new FLARERROR('NOT_FOUND', 'server not found'));
+			}
+
+			return executeFetch(request, env, ctx, opts[server], server);
+		},
+		queue: queues
+			? (batch: MessageBatch, env: Env, ctx: ExecutionContext) => {
+					const { router, server } = queues[batch.queue];
+					return executeQueue(batch, env, ctx, router, opts[server as S]);
+				}
+			: undefined,
+		scheduled: crons
+			? async (controller: ScheduledController, env: Env, ctx: ExecutionContext) => {
+					const { handler, server } = crons[controller.cron];
+					for (const cron in crons) {
+						if (cron.replaceAll(' ', '') === controller.cron.replaceAll(' ', '')) {
+							await executeCron(controller, env, ctx, handler, opts[server as S]);
+							break;
+						}
+					}
+				}
+			: undefined,
+		infer: {} as {
+			[K in keyof O]: {
+				router: O[K]['router'];
+				objects: O[K]['objects'] extends DurableObjects
+					? { [P in keyof O[K]['objects']]: InferDurableApi<O[K]['objects'][P]['prototype']> }
+					: undefined;
+			};
+		},
+	};
+};
+
 export const createServer = <R extends Router, O extends DurableObjects>(opts: ServerOptions<R, O>) => ({
 	async fetch(r: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+		// @ts-ignore
 		return executeFetch(r, env, ctx, opts);
 	},
 	infer: {} as {
@@ -178,44 +258,6 @@ export const createServer = <R extends Router, O extends DurableObjects>(opts: S
 		? (event: ScheduledController, env: Env, ctx: ExecutionContext) => executeCron(event, env, ctx, opts.crons![event.cron], opts)
 		: undefined,
 });
-
-export const createServers = <CS extends CombinedServerOptions>(opts: CS) => {
-	const servers = Object.keys(opts);
-	const crons = combineCrons(opts);
-	const queues = combineQueues(opts);
-	return {
-		async fetch(request: Request, env: Env, ctx: ExecutionContext) {
-			const server = servers.find((server) => request.url.includes(`[${server}]`));
-
-			if (!server || !(server in opts)) {
-				return handleError(new FLARERROR('NOT_FOUND', 'server not found'));
-			}
-
-			return executeFetch(request, env, ctx, opts[server], server);
-		},
-		queue: queues
-			? (batch: MessageBatch, env: Env, ctx: ExecutionContext) => {
-					const { router, server } = queues[batch.queue];
-					return executeQueue(batch, env, ctx, router, opts[server]);
-				}
-			: undefined,
-		scheduled: crons
-			? (controller: ScheduledController, env: Env, ctx: ExecutionContext) => {
-					const { handler, server } = crons[controller.cron];
-					return executeCron(controller, env, ctx, handler, opts[server]);
-				}
-			: undefined,
-		infer: {} as {
-			[K in keyof CS]: {
-				router: CS[K]['router'];
-				objects: CS[K]['objects'] extends DurableObjects
-					? { [KK in keyof CS[K]['objects']]: InferDurableApi<CS[K]['objects'][KK]['prototype']> }
-					: undefined;
-			};
-		},
-	};
-};
-
 export const combineRouters = <R extends Router[]>(...routers: R) => {
 	const router: Router = {};
 
@@ -225,7 +267,7 @@ export const combineRouters = <R extends Router[]>(...routers: R) => {
 	return router as CombinedRouters<R>;
 };
 
-export const combineCrons = (opts: CombinedServerOptions) => {
+export const combineCrons = (opts: ServersOptions) => {
 	let hasCrons = false;
 	const CRONS: Record<
 		string,
@@ -249,7 +291,7 @@ export const combineCrons = (opts: CombinedServerOptions) => {
 	return hasCrons ? CRONS : undefined;
 };
 
-export const combineQueues = (opts: CombinedServerOptions) => {
+export const combineQueues = (opts: ServersOptions) => {
 	const QUEUES: Record<
 		string,
 		{

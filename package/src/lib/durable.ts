@@ -24,11 +24,10 @@ import {
 	StaticHandler,
 	Cookies,
 	DurableRequestEvent,
-	WebsocketInputRequestEvent,
-	WebsocketOutputRequestEvent,
 	QueueHandler,
 	validate,
 	MaybePromise,
+	WS_RESPONSE_TYPE,
 } from '.';
 import { rateLimit } from './ratelimit';
 import { getPath } from './requestEvent';
@@ -38,17 +37,18 @@ const getDefaultBroadcastPresenceTag = (opts?: DurableOptions) =>
 		? opts?.broadcastPresenceTo
 		: opts?.broadcastPresenceTo || 'ALL';
 
-export const serializeAttachment = (ws: WebSocket, value: Session) => {
+export const serializeSession = (ws: WebSocket, value: Session) => {
 	ws.serializeAttachment(stringify(value));
 };
 
-export const deserializeAttachment = (ws: WebSocket): Session => {
+export const deserializeSession = (ws: WebSocket): Session => {
 	return parse(ws.deserializeAttachment()) as Session;
 };
 
 type ArrayBufferMessageHandler = (ws: WebSocket, message: ArrayBuffer) => MaybePromise<void>;
 
 export class DurableServer extends DurableObject<any> {
+	_TYPE: any = 'DURABLE_SERVER';
 	opts?: DurableOptions;
 	// @ts-expect-error this will be set in the constructor by blocking concurrency if needed
 	locals: Locals;
@@ -62,6 +62,7 @@ export class DurableServer extends DurableObject<any> {
 	onArrayBufferMessage?: ArrayBufferMessageHandler;
 	onConnectionOpen?: (ws: WebSocket, session: Session) => void;
 	onConnectionClose?: (ws: WebSocket, session: Session) => void;
+	blockConcurrencyWhile?: () => Promise<void>;
 
 	setPresence = async ({ participant, sessionData }: { participant: Participant; sessionData?: SessionData }) => {
 		const sessions = await this.getSessions();
@@ -72,8 +73,7 @@ export class DurableServer extends DurableObject<any> {
 				data: sessionData || {},
 				participant,
 			} satisfies Session;
-			serializeAttachment(session.ws, newSession);
-
+			serializeSession(session.ws, newSession);
 			this.sendPresence();
 			return newSession;
 		}
@@ -114,15 +114,15 @@ export class DurableServer extends DurableObject<any> {
 		public env: Env,
 	) {
 		super(ctx, env);
-		const locals = this.opts?.locals;
 		ctx.blockConcurrencyWhile(async () => {
+			const locals = this.opts?.locals;
 			if (typeof locals === 'function') {
 				this.locals = await locals(env, ctx);
 			} else if (locals) {
 				this.locals = locals;
 			}
-			if (this.opts?.blockConcurrencyWhile) {
-				await this.opts.blockConcurrencyWhile(this);
+			if (this.blockConcurrencyWhile) {
+				await this.blockConcurrencyWhile?.();
 			}
 		});
 		this.env = env;
@@ -214,7 +214,7 @@ export class DurableServer extends DurableObject<any> {
 				meta: this.meta,
 			};
 
-			serializeAttachment(server, session);
+			serializeSession(server, session);
 
 			this.ctx.acceptWebSocket(server, tags);
 			this.sendPresence();
@@ -237,12 +237,18 @@ export class DurableServer extends DurableObject<any> {
 			return this.onArrayBufferMessage?.(ws, message);
 		}
 
-		const session = deserializeAttachment(ws);
+		const session = deserializeSession(ws);
+		let id: string | undefined = undefined;
+		let data: any | undefined = undefined;
+		let type: string | undefined = undefined;
 		try {
 			if (!this.in) {
 				throw error('SERVICE_UNAVAILABLE');
 			}
-			const { type, data } = parse(message as string);
+			const { type: messageType, data: messageData, id: messageId } = parse(message as string);
+			id = messageId;
+			type = messageType;
+			data = messageData;
 
 			const event = this.event({ from: { session, ws } });
 			this.opts?.rateLimiters &&
@@ -252,11 +258,16 @@ export class DurableServer extends DurableObject<any> {
 			const handler = getHandler(this.in, String(type).split('.')) as Handler<any, any, any, any>;
 
 			const parsedData = await validate(handler?.schema, data);
-			await handler?.call(event, parsedData);
+			const response = await handler?.call(event, parsedData);
+			ws.send(stringify({ type: WS_RESPONSE_TYPE, data: response, id, error: null }));
 		} catch (error) {
-			this.opts?.onError?.({ error, ws, session, message, object: this });
+			this.opts?.onError?.({ error, ws, session, message, object: this, type, data });
 			const { body, status, statusText } = getErrorAsJson(error);
-			ws.send(stringify({ type: 'error', data: { ...JSON.parse(body), status, statusText } }));
+			if (id) {
+				ws.send(stringify({ type: WS_RESPONSE_TYPE, error: { ...JSON.parse(body), status, statusText }, id, data: null }));
+			} else {
+				ws.send(stringify({ type: 'error', data: { ...JSON.parse(body), status, statusText } }));
+			}
 		}
 	}
 
@@ -264,16 +275,18 @@ export class DurableServer extends DurableObject<any> {
 		setTimeout(() => {
 			this.sendPresence();
 		});
+		this.onConnectionClose?.(ws, deserializeSession(ws));
 	}
 	async webSocketClose(ws: WebSocket, code: number, reason: string) {
 		setTimeout(() => {
 			this.sendPresence();
 		});
+		this.onConnectionClose?.(ws, deserializeSession(ws));
 	}
 
 	getSessions = (tag?: Tags) => {
 		return this.ctx.getWebSockets(tag).map((ws) => ({
-			session: deserializeAttachment(ws),
+			session: deserializeSession(ws),
 			ws,
 		}));
 	};
@@ -284,6 +297,7 @@ export class DurableServer extends DurableObject<any> {
 			// If some tag is passed this options will overtake the default options we will broadcast presence
 			return;
 		}
+
 		const participants = this.getSessions(tag === 'ALL' ? undefined : tag)
 			.filter(({ ws, session }) => {
 				if (session.connected !== true) {
@@ -302,6 +316,7 @@ export class DurableServer extends DurableObject<any> {
 
 export const createDurableServer = (opts?: DurableOptions) => {
 	return class extends DurableServer {
+		_TYPE = 'DURABLE_SERVER' as const;
 		opts = opts;
 	};
 };

@@ -6,18 +6,15 @@
 
 	onMount(async () => {
 		const wes = await publicApi.TestDurable('test').connect({
-			dedupeConnection: true,
-			onError(error) {
-				console.log(error);
-			},
-			onPresence: (data) => {
-				console.log('presence', data, 'helleaeazlea');
-			},
-			handlers: {
-				message: ({ data, ctx }) => {
-					console.log(data);
-				}
-			}
+			// handlers: {
+			// 	message: ({ data, ctx }) => {
+			// 		console.log(data);
+			// 	}
+			// }
+		});
+		console.log(wes);
+		wes.on('presence', () => {
+			console.log('presence');
 		});
 		ws = wes;
 	});
@@ -30,8 +27,12 @@
 		class="shadow-md rounded-lg h-fit bg-white p-4"
 		onclick={async () => {
 			// const result = await api.text('ezaez');
-			const result2 = await publicApi.public('');
-			console.log(result2);
+			const [result2, error] = await publicApi.public('true');
+			if (result2) {
+				console.log(result2);
+			} else {
+				console.log({ error });
+			}
 		}}
 	>
 		Test procedure
@@ -39,8 +40,22 @@
 	<button
 		class="shadow-md rounded-lg h-fit bg-white p-4"
 		onclick={async () => {
-			const result = await publicApi.TestDurable('random').test({ id: false });
-			console.log({ result });
+			// const result = await api.text('ezaez');
+			const [result2, error] = await publicApi.caca.prout.vomi();
+			if (result2) {
+				console.log(result2);
+			} else {
+				console.log({ error });
+			}
+		}}
+	>
+		Test excluded procedure
+	</button>
+	<button
+		class="shadow-md rounded-lg h-fit bg-white p-4"
+		onclick={async () => {
+			const [result, error] = await publicApi.TestDurable('test').test();
+			console.log({ result, error });
 		}}
 	>
 		Test durable
@@ -48,7 +63,7 @@
 	<button
 		class="shadow-md rounded-lg h-fit bg-white p-4"
 		onclick={async () => {
-			const result = await api.TestDurable('test').test({ id: 'string' });
+			const result = await api.TestDurable('test');
 			console.log(result);
 		}}
 	>
@@ -57,15 +72,17 @@
 	<button
 		class="shadow-md rounded-lg h-fit bg-white p-4"
 		onclick={async () => {
-			const result = await api.TestDurable('test').validators.zod({
-				name: 'world',
-				platform: 'android',
-				versions: ['1', '2', '3']
-			});
-			console.log(result);
+			if (!ws) return;
+
+			const [result, error] = await ws?.send.message({ message: 'test' });
+			if (error) {
+				console.log({ error });
+			} else {
+				console.log({ result });
+			}
 		}}
 	>
-		Error on zod
+		test ws response
 	</button>
 	<button
 		class="shadow-md rounded-lg h-fit bg-white p-4"

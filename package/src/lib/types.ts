@@ -1,5 +1,5 @@
 import type { Queue } from '@cloudflare/workers-types';
-import { type InferInput as VInput, type InferOutput as VOutput, type BaseSchema as VSchema } from 'valibot';
+import type { InferInput as VInput, InferOutput as VOutput, BaseSchema as VSchema } from 'valibot';
 import type { Schema as ZSchema, infer as ZOutput, input as ZInput } from 'zod';
 import type { Type as ASchema } from 'arktype';
 
@@ -116,6 +116,8 @@ export type Session = {
 export type MessagePayload<O extends Router, T extends RouterPaths<O>> = {
 	type: T;
 	data: InferSchemaOutPutAtPath<O, T>;
+	id?: string;
+	error?: unknown;
 	ctx: InferOutPutAtPath<O, T>;
 };
 
@@ -146,7 +148,15 @@ export type DurableOptions = {
 		event: DurableRequestEvent;
 		object: DurableServer;
 	}) => MaybePromise<{ session: SessionData; participant: Participant; tags?: Tags[] }>;
-	onError?: (payload: { error: unknown; ws?: WebSocket; session?: Session; message?: string; object: DurableServer }) => MaybePromise<void>;
+	onError?: (payload: {
+		error: unknown;
+		ws?: WebSocket;
+		session?: Session;
+		message?: string;
+		object: DurableServer;
+		type?: string;
+		data?: any;
+	}) => MaybePromise<void>;
 	onMessage?: (payload: { ws: WebSocket; session: Session; message: string; object: DurableServer }) => MaybePromise<void>;
 	locals?: Locals | ((env: Env, ctx: DurableObjectState) => MaybePromise<Locals>);
 	broadcastPresenceTo?: 'NONE' | 'ALL' | Tags;
@@ -208,11 +218,16 @@ export type Server = {
 	objects?: Record<string, DurableServerDefinition>;
 };
 
-export type DurableServerDefinition<R extends Router = Router, I extends Router = Router, O extends Router = Router> = {
-	_DOC_?: boolean;
+export type DurableServerDefinition<
+	R extends Router = Router,
+	I extends Router = Router,
+	O extends Router = Router,
+	D extends any = any,
+> = {
 	router?: R;
 	in?: I;
 	out?: O;
+	_TYPE?: D;
 };
 
 type IO<R> = R extends Router
@@ -241,29 +256,31 @@ export type InferApiTypes<S extends Server> = IO<S['router']> & {
 	[K in keyof S['objects']]: IO<Get<S['objects'][K], 'router'>> & InferWS<S['objects'][K]>;
 };
 
-export type InferDurableApi<D extends DurableServer | DurableDoc> = DurableServerDefinition<D['router'], D['in'], D['out']> &
-	D extends DurableDoc
-	? { _DOC_: true }
-	: {};
+export type InferDurableApi<D extends DurableServer | DurableDoc> = DurableServerDefinition<D['router'], D['in'], D['out'], D['_TYPE']>;
 
 export type DocProviderConstructor<O extends Router> = new (ws: WebSocketClient, opts?: DocOptions<O>) => DocProvider;
 
 export type Client<S extends Server> = API<S['router']> & {
-	[K in keyof S['objects']]: (id?: 'random' | (string & {})) => S['objects'][K] extends DurableServerDefinition<infer R, infer I, infer O>
-		? API<R> & {
-				connect: (options?: ConnectOptions<O>) => Promise<WebSocketClient<I, O>>;
-			} & (S['objects'][K] extends { _DOC_: true }
-					? {
-							doc: (
+	[K in keyof S['objects']]: (id?: 'random' | (string & {})) => S['objects'][K] extends DurableServerDefinition<
+		infer R,
+		infer I,
+		infer O,
+		infer T
+	>
+		? API<R> &
+				OmitNever<{
+					connect: (options?: ConnectOptions<O>) => Promise<WebSocketClient<I, O>>;
+					doc: T extends 'DURABLE_DOC'
+						? (
 								provider: DocProviderConstructor<O>,
 								options?: DocOptions<O>,
 							) => Promise<{
 								doc: DocProvider['doc'];
 								awareness: DocProvider['awareness'];
 								client: WebSocketClient<I, O>;
-							}>;
-						}
-					: never)
+							}>
+						: never;
+				}>
 		: never;
 };
 
@@ -273,17 +290,29 @@ export type StreamCallbacks<C = string> = {
 	onEnd?: (chunks: C[]) => MaybePromise<void>;
 };
 
+type ApiResult<T> = Promise<[Awaited<T>, null] | [null, object]>;
+
 export type StreamCallback<S = any> = ({ chunk, first }: { chunk: S; first: boolean }) => void;
+
+export type WSAPI<R extends Router> = {
+	[K in keyof R]: R[K] extends Handler<infer M, infer S, infer H, infer T>
+		? S extends Schema
+			? (payload: SchemaInput<S>) => Promise<ApiResult<ReturnType<H>>>
+			: () => Promise<ApiResult<ReturnType<H>>>
+		: R[K] extends Router
+			? WSAPI<R[K]>
+			: R[K];
+};
 
 export type API<R extends Router = Router> = {
 	[K in keyof R]: R[K] extends Handler<infer M, infer S, infer H, infer T>
 		? S extends Schema
 			? ReturnType<H> extends Promise<ReadableStream<infer C>>
 				? (payload: SchemaInput<S>, callback: StreamCallback<C>) => void
-				: (payload: SchemaInput<S>) => ReturnType<H>
+				: (payload: SchemaInput<S>) => Promise<ApiResult<ReturnType<H>>>
 			: ReturnType<H> extends Promise<ReadableStream<infer C>>
 				? (callback: StreamCallback<C>) => void
-				: () => ReturnType<H>
+				: () => Promise<ApiResult<ReturnType<H>>>
 		: R[K] extends Router
 			? API<R[K]>
 			: R[K];
@@ -360,16 +389,6 @@ export type CombinedRouters<R extends Router[]> = R extends [infer First, ...inf
 		: First
 	: Router;
 
-export type WSAPI<R extends Router> = {
-	[K in keyof R]: R[K] extends Handler<infer M, infer S, infer H, infer T>
-		? S extends Schema
-			? (payload: SchemaInput<S>) => void
-			: () => void
-		: R[K] extends Router
-			? WSAPI<R[K]>
-			: R[K];
-};
-
 export type DurableObjects = Record<
 	string,
 	{
@@ -386,12 +405,37 @@ export type ServerOptions<R extends Router = Router, O extends DurableObjects = 
 	after?: ((response: Response, event: RequestEvent) => MaybePromise<Response | void>)[];
 	onError?: (errorPayload: { error: unknown; event: RequestEvent }) => Response | void;
 	queues?: Queues;
-	cors?: false | CorsOptions | ((event: RequestEvent) => MaybePromise<CorsOptions>);
+	cors?: false | CorsOptions | ((event: RequestEvent) => MaybePromise<CorsOptions | false | undefined>);
 	getObjectJurisdictionOrLocationHint?: GetObjectJurisdictionOrLocationHint;
 	objects?: O;
 	static?: StaticServerOptions;
 	rateLimiters?: ProcedureRateLimiters;
 	crons?: Record<string, CronHandler>;
+	exclude?: BooleanRoutes<R, O>;
+	// include?: BooleanRoutes<R, O>;
 };
 
-export type CombinedServerOptions = Record<string, ServerOptions>;
+export type RoutesPathToBooleanRoutes<
+	R extends Router,
+	P extends string,
+	BasePath extends string = '',
+	Depth extends number[] = [1, 1, 1, 1, 1, 1], // just trying to avoid infinite recursion
+> = Depth extends []
+	? never
+	: P extends `${infer START}.${infer REST}`
+		? {
+				[K in START]?: RoutesPathToBooleanRoutes<R, REST, BasePath extends '' ? `${K}` : `${BasePath}.${K}`, Tail<Depth>> | boolean;
+			}
+		: {
+				[K in P]?: `${BasePath}.${K}` extends RouterPaths<R> ? boolean : unknown;
+			};
+
+type Tail<T extends any[]> = T extends [any, ...infer U] ? U : never;
+
+export type BooleanRoutes<R extends Router, O extends DurableObjects | undefined = undefined> = Partial<
+	(O extends DurableObjects
+		? { [K in keyof O]: RoutesPathToBooleanRoutes<O[K]['prototype']['router'], RouterPaths<O[K]['prototype']['router']>> }
+		: any) & {
+		[K in SingletonPaths<R, RouterPaths<R>>]: boolean;
+	} & UnionToIntersection<RoutesPathToBooleanRoutes<R, NestedPaths<R, RouterPaths<R>>>>
+>;

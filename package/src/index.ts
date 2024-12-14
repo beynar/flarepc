@@ -1,14 +1,26 @@
-import { procedure, createServer, createDurableServer, combineRouters, createServers, Server as SS } from './lib';
+import {
+	procedure,
+	createServer,
+	createDurableServer,
+	combineRouters,
+	createServers,
+	Server as SS,
+	InferApiTypes,
+	DurableServer,
+	Router,
+	CombinedServerOptions,
+	DurableObjects,
+} from './lib';
 import { string, object, map, BaseSchema, boolean, instance, number, undefined_, null_, date, set } from 'valibot';
 import { createClient } from './lib/client';
-import { createDurableDoc, DurableDoc } from './lib/yjs';
-import { DocProvider } from './lib/yjs/client';
+import { WebSocketClient } from './lib/websocket';
 
 declare global {
 	type Locals = {};
 
 	interface Env {
 		Queue: Queue;
+		TestDurable: DurableObjectNamespace<TestDurable>;
 	}
 	type Queues = {
 		Queue: typeof Queue;
@@ -197,7 +209,108 @@ const durableRouter = {
 		}),
 };
 
-export class TestDurable extends createDurableDoc() {
+// const server = createServer({
+// 	router,
+// 	// locals,
+// 	objects: {
+// 		TestDurable: TestDurable,
+// 	},
+// 	// queues: {
+// 	// 	Queue,
+// 	// },
+// });
+// export class TestDoc extends createDurableDoc({
+// 	locals: () => {
+// 		return {};
+// 	},
+// 	storage: {
+// 		getDoc: async ({}) => {
+// 			return new Doc();
+// 		},
+// 		saveDoc: async ({ snapshot, doc }) => {
+// 			console.log({ snapshot, doc });
+// 		},
+// 	},
+// }) {
+// 	out = {
+// 		message: procedure('out')
+// 			.input(object({ message: string() }))
+// 			.handle(async ({ input, event }) => {
+// 				return {
+// 					hello: input.message,
+// 				};
+// 			}),
+// 	};
+// 	in = {
+// 		message: procedure('in')
+// 			.input(object({ message: string() }))
+// 			.handle(async ({ input, event }) => {
+// 				return {
+// 					hello: input.message,
+// 				};
+// 			}),
+// 	};
+// 	testRouter = {
+// 		test2: procedure('durable').handle(async ({ event }) => {
+// 			return {
+// 				ok: false,
+// 			};
+// 		}),
+// 	};
+// 	send = this.createSender(this.out);
+
+// 	router = combineRouters(durableRouter, this.testRouter);
+// }
+
+// export type Server = typeof server.infer;
+// export default server;
+
+// const adminRouter = {
+// 	admin: procedure().handle(async ({ event }) => {
+// 		return {
+// 			hello: 'world',
+// 			res,
+// 		};
+// 	}),
+// };
+
+// const servers = createServers({
+// 	public: {
+// 		router: publicRouter,
+// 		objects: {
+// 			TestDurable: TestDurable,
+// 			// TestDoc: TestDoc,
+// 		},
+// 	},
+// 	admin: {
+// 		router: adminRouter,
+// 	},
+// });
+
+// export type Servers = typeof servers.infer;
+
+// type D = Servers['public']['objects']['TestDurable'];
+// export type PublicServer = typeof servers.infer.public;
+// export type AdminServer = typeof servers.infer.admin;
+
+const publicRouter = {
+	get: procedure().handle(async ({ event }) => {
+		return {
+			hello: 'world',
+		};
+	}),
+	nested: {
+		nested: {
+			nested: procedure().handle(async ({ event }) => {
+				return {
+					hello: 'world',
+				};
+			}),
+		},
+	},
+};
+
+export class TestDurable extends createDurableServer() {
 	out = {
 		message: procedure('out')
 			.input(object({ message: string() }))
@@ -216,7 +329,7 @@ export class TestDurable extends createDurableDoc() {
 				};
 			}),
 	};
-	testRouter = {
+	router = {
 		test2: procedure('durable').handle(async ({ event }) => {
 			return {
 				ok: false,
@@ -225,75 +338,66 @@ export class TestDurable extends createDurableDoc() {
 	};
 	send = this.createSender(this.out);
 
-	router = combineRouters(durableRouter, this.testRouter);
+	// 	router = combineRouters(durableRouter, this.testRouter);
+	// 	test() {
+	// 		return {
+	// 			name: this.ctx.id.name || 'name',
+	// 			ok: false,
+	// 		};
+	// 	}
 }
-
 const server = createServer({
-	router,
-	// locals,
+	router: publicRouter,
 	objects: {
 		TestDurable: TestDurable,
 	},
-	// queues: {
-	// 	Queue,
-	// },
+	exclude: {
+		TestDurable: {
+			test2: true,
+		},
+
+		nested: {
+			nested: {
+				nested: true,
+			},
+		},
+	},
 });
-
-export type Server = typeof server.infer;
-// export default server;
-
-const publicRouter = {
-	public: procedure().handle(async ({ event }) => {
-		return {
-			hello: 'world',
-		};
-	}),
-};
-const adminRouter = {
-	admin: procedure().handle(async ({ event }) => {
-		return {
-			hello: 'world',
-		};
-	}),
-};
-
 const servers = createServers({
-	public: {
+	test: {
 		router: publicRouter,
 		objects: {
 			TestDurable: TestDurable,
 		},
-	},
-	admin: {
-		router: adminRouter,
+		exclude: {
+			get: true,
+		},
+		// exclude:{
+
+		// }
+		// exclude: {
+		// 	TestDurable: {
+		// 		test2: true,
+		// 	},
+		// },
 	},
 });
 
+export type Server = typeof server.infer;
 export type Servers = typeof servers.infer;
 
-type D = Servers['public']['objects']['TestDurable'];
-export type PublicServer = typeof servers.infer.public;
-export type AdminServer = typeof servers.infer.admin;
-
-const api = createClient<Servers, 'public'>({
-	endpoint: 'http://localhost:8080',
-	server: 'public',
-	onError: (error) => {
-		console.log(error);
-	},
+type In = typeof server.infer.objects.TestDurable.in;
+type Out = typeof server.infer.objects.TestDurable.out;
+type WSS = WebSocketClient<In, Out>;
+const client = createClient<Server>({
+	endpoint: '',
+});
+const client2 = createClient<Servers, 'test'>({
+	endpoint: '',
+	server: 'test',
 });
 
-const {ws, provider} = await api.TestDurable('random').doc(DocProvider);
+// client2.TestDurable()
+const wss = {} as WSS;
 
-provider.
-
-
-
-const api2 = createClient<Server>({
-	endpoint: 'http://localhost:8080',
-	onError: (error) => {
-		console.log(error);
-	},
-});
-
-type T = Servers extends Record<string, SS> ? true : false;
+const result = await wss.send?.message({ message: 'hello' });

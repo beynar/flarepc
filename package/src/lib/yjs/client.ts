@@ -10,16 +10,41 @@ import { ObservableV2 } from 'lib0/observable';
 const messageSync = 0;
 const messageQueryAwareness = 3;
 const messageAwareness = 1;
-const messageAuth = 2;
+
 type Events = {
 	sync: () => void;
 };
+
+export function debounce<T extends (...args: any[]) => void>(func: T, wait: number, sendFirst = true): (...args: Parameters<T>) => void {
+	let timeout: ReturnType<typeof setTimeout> | null = null;
+	let lastCallTime: number = 0;
+
+	return (...args: Parameters<T>) => {
+		const now = Date.now();
+		const shouldCallImmediately = sendFirst && now - lastCallTime > wait;
+
+		if (timeout !== null) {
+			clearTimeout(timeout);
+		}
+
+		if (shouldCallImmediately) {
+			func(...args);
+			lastCallTime = now;
+		} else {
+			timeout = setTimeout(() => {
+				func(...args);
+				lastCallTime = Date.now();
+			}, wait);
+		}
+	};
+}
 
 export type DocProviderOptions = {
 	resyncInterval?: number;
 	disableBroadcast?: boolean;
 	awareness?: awarenessProtocol.Awareness;
 	doc?: Y.Doc;
+	debounceMs?: number;
 };
 export class DocProvider extends ObservableV2<Events> {
 	doc: Y.Doc;
@@ -34,19 +59,28 @@ export class DocProvider extends ObservableV2<Events> {
 	private _bcSubscriber: (data: ArrayBuffer, origin: any) => void;
 	private _updateHandler: (update: Uint8Array, origin: any) => void;
 	private _awarenessUpdateHandler: ({ added, updated, removed }: { added: any; updated: any; removed: any }, _origin: any) => void;
-	private _exitHandler: () => void;
 	private _resyncInterval: any;
+	private debouncedBroadcastUpdate: () => void;
 
-	constructor(ws: WebSocketClient, { resyncInterval = -1, disableBroadcast = false, awareness, doc }: DocProviderOptions = {}) {
+	private pendingUpdates: Uint8Array[] = [];
+	private debounceMs: number = 0;
+
+	constructor(
+		ws: WebSocketClient,
+		{ resyncInterval = -1, disableBroadcast = false, awareness, doc, debounceMs = 0 }: DocProviderOptions = {},
+	) {
 		super();
+		this.debounceMs = debounceMs;
 		this.doc = doc || new Y.Doc();
 		this.awareness = awareness || new awarenessProtocol.Awareness(this.doc);
 		this.bcChannel = ws.url.toString();
 		this.bcconnected = false;
+
 		this.disableBroadcast = disableBroadcast;
 		this._resyncInterval = resyncInterval;
 		this.wsClient = ws;
 		this.ws = ws.ws!;
+
 		this._bcSubscriber = (data, origin) => {
 			if (origin !== this) {
 				const encoder = this.readMessage(new Uint8Array(data), false);
@@ -55,12 +89,21 @@ export class DocProvider extends ObservableV2<Events> {
 				}
 			}
 		};
+
+		this.debouncedBroadcastUpdate = debounce(() => {
+			const mergedUpdate = Y.mergeUpdates(this.pendingUpdates);
+			this.pendingUpdates = [];
+			this.broadcastChange(mergedUpdate);
+		}, this.debounceMs);
+
 		this._updateHandler = (update, origin) => {
 			if (origin !== this) {
-				const encoder = encoding.createEncoder();
-				encoding.writeVarUint(encoder, messageSync);
-				syncProtocol.writeUpdate(encoder, update);
-				this.broadcastMessage(encoding.toUint8Array(encoder));
+				if (this.debounceMs > 0) {
+					this.pendingUpdates.push(update);
+					this.debouncedBroadcastUpdate();
+				} else {
+					this.broadcastChange(update);
+				}
 			}
 		};
 
@@ -71,9 +114,7 @@ export class DocProvider extends ObservableV2<Events> {
 			encoding.writeVarUint8Array(encoder, awarenessProtocol.encodeAwarenessUpdate(this.awareness, changedClients));
 			this.broadcastMessage(encoding.toUint8Array(encoder));
 		};
-		this._exitHandler = () => {
-			awarenessProtocol.removeAwarenessStates(this.awareness, [this.doc.clientID], 'app closed');
-		};
+
 		// if (env.isNode && typeof process !== 'undefined') {
 		// 	process.on('exit', this._exitHandler);
 		// }
@@ -85,6 +126,17 @@ export class DocProvider extends ObservableV2<Events> {
 		ws.on('close', this.onClose);
 		ws.on('open', this.onOpen);
 	}
+	// ????
+	private _exitHandler = () => {
+		awarenessProtocol.removeAwarenessStates(this.awareness, [this.doc.clientID], 'app closed');
+	};
+
+	private broadcastChange = (update: Uint8Array) => {
+		const encoder = encoding.createEncoder();
+		encoding.writeVarUint(encoder, messageSync);
+		syncProtocol.writeUpdate(encoder, update);
+		this.broadcastMessage(encoding.toUint8Array(encoder));
+	};
 
 	private messageHandlers = {
 		[messageSync]: (
@@ -132,7 +184,7 @@ export class DocProvider extends ObservableV2<Events> {
 
 	private broadcastMessage(buf: Uint8Array) {
 		this.wsClient.sendRaw(buf);
-		if (this.bcconnected) {
+		if (this.bcconnected && !this.disableBroadcast) {
 			bc.publish(this.bcChannel, buf, this);
 		}
 	}
