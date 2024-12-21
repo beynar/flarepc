@@ -1,5 +1,6 @@
 import { Env, RequestEvent, error } from '.';
 import { lookup } from 'mrmime';
+import type { Request as CFRequest } from '@cloudflare/workers-types';
 
 export type CacheControl = {
 	browserTTL: number | null;
@@ -8,7 +9,7 @@ export type CacheControl = {
 };
 
 export type StaticServerOptions = {
-	cacheControl: ((req: Request) => Partial<CacheControl>) | Partial<CacheControl>;
+	cacheControl: ((req: CFRequest) => Partial<CacheControl>) | Partial<CacheControl>;
 	defaultETag: 'strong' | 'weak';
 	cacheBucket: 'DEFAULT' | (string & {});
 };
@@ -95,7 +96,7 @@ export class StaticHandler {
 		return this.manifest as Record<string, string>;
 	};
 
-	serve = async (request: Request, key: string): Promise<Response | void> => {
+	serve = async (request: CFRequest, key: string): Promise<Response | void> => {
 		const url = new URL(request.url);
 		const manifest = await this.getManifest();
 
@@ -106,7 +107,7 @@ export class StaticHandler {
 
 		const pathKey = manifest[key];
 		const cache = this.options.cacheBucket === 'DEFAULT' ? caches.default : await caches.open(this.options.cacheBucket);
-		const cacheKey = new Request(`${url.origin}/${pathKey}`, request);
+		const cacheKey = new Request(`${url.origin}/${pathKey}`, request as Request);
 
 		if (!pathKey) {
 			throw error('NOT_FOUND');

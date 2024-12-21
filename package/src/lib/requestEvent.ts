@@ -9,10 +9,8 @@ import {
 	DurableServer,
 	ServerOptions,
 	GetObjectJurisdictionOrLocationHint,
-	Router,
-	DurableObjects,
 } from '.';
-import { regiterDurableMeta } from './ambient';
+import type { Request } from '@cloudflare/workers-types';
 
 const getMetaFromRequest = async ({
 	event,
@@ -64,7 +62,7 @@ export const buildEvent = async (
 		ctx,
 		env,
 		path: [],
-		locals: typeof opts.locals === 'function' ? await opts.locals(request, env, ctx) : opts.locals,
+		locals: {},
 		queue: new QueueHandler(env, ctx, opts.queues).send,
 		request,
 		static: new StaticHandler(env, ctx),
@@ -75,6 +73,7 @@ export const buildEvent = async (
 
 	getPath(event);
 	await getMetaFromRequest({ event, getObjectJurisdictionOrLocationHint: opts.getObjectJurisdictionOrLocationHint });
+	event.locals = typeof opts.locals === 'function' ? await opts.locals(event) : opts.locals;
 	return event;
 };
 
@@ -107,7 +106,7 @@ export type RequestEvent = {
 	request: Request;
 	env: Env;
 	ctx: ExecutionContext;
-	locals?: Locals;
+	locals: Locals;
 	path: string[];
 	meta: Meta;
 	queue: QueueHandler['send'];

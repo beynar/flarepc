@@ -2,7 +2,6 @@ import type { Queue } from '@cloudflare/workers-types';
 import type { InferInput as VInput, InferOutput as VOutput, BaseSchema as VSchema } from 'valibot';
 import type { Schema as ZSchema, infer as ZOutput, input as ZInput } from 'zod';
 import type { Type as ASchema } from 'arktype';
-
 import {
 	Handler,
 	ConnectOptions,
@@ -18,6 +17,7 @@ import {
 	StaticServerOptions,
 	DocOptions,
 } from '.';
+
 import type { DurableDoc } from './yjs';
 import type { DocProvider } from './yjs/client';
 export interface Register {}
@@ -158,7 +158,9 @@ export type DurableOptions = {
 		data?: any;
 	}) => MaybePromise<void>;
 	onMessage?: (payload: { ws: WebSocket; session: Session; message: string; object: DurableServer }) => MaybePromise<void>;
-	locals?: Locals | ((env: Env, ctx: DurableObjectState) => MaybePromise<Locals>);
+	locals?:
+		| Locals
+		| ((event: Omit<DurableRequestEvent | RequestEvent | QueueRequestEvent | CronRequestEvent, 'locals'>) => MaybePromise<Locals>);
 	broadcastPresenceTo?: 'NONE' | 'ALL' | Tags;
 	rateLimiters?: WebsocketRateLimiters;
 	blockConcurrencyWhile?: (object: DurableServer) => MaybePromise<void>;
@@ -397,7 +399,9 @@ export type DurableObjects = Record<
 >;
 
 export type CronHandler = (event: CronRequestEvent) => void;
-export type LocalsOptions = Locals | ((request: Request, env: Env, ctx: ExecutionContext) => MaybePromise<Locals>);
+export type LocalsOptions =
+	| Locals
+	| ((event: Omit<RequestEvent | QueueRequestEvent | CronRequestEvent | DurableRequestEvent, 'locals'>) => MaybePromise<Locals>);
 export type ServerOptions<R extends Router = Router, O extends DurableObjects = DurableObjects> = {
 	router: R;
 	locals?: LocalsOptions;
@@ -411,7 +415,7 @@ export type ServerOptions<R extends Router = Router, O extends DurableObjects = 
 	static?: StaticServerOptions;
 	rateLimiters?: ProcedureRateLimiters;
 	crons?: Record<string, CronHandler>;
-	exclude?: BooleanRoutes<R, O>;
+	// exclude?: BooleanRoutes<R, O>;
 	// include?: BooleanRoutes<R, O>;
 };
 

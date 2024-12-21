@@ -28,9 +28,11 @@ import {
 	validate,
 	MaybePromise,
 	WS_RESPONSE_TYPE,
+	tryParse,
 } from '.';
 import { rateLimit } from './ratelimit';
 import { getPath } from './requestEvent';
+import type { Request, Response as CFResponse } from '@cloudflare/workers-types';
 
 const getDefaultBroadcastPresenceTag = (opts?: DurableOptions) =>
 	opts?.broadcastPresenceTo && opts?.broadcastPresenceTo !== 'ALL' && opts?.broadcastPresenceTo !== 'NONE'
@@ -46,6 +48,7 @@ export const deserializeSession = (ws: WebSocket): Session => {
 };
 
 type ArrayBufferMessageHandler = (ws: WebSocket, message: ArrayBuffer) => MaybePromise<void>;
+type UnHandledMessageHandler = (ws: WebSocket, message: Record<string, any>) => MaybePromise<void>;
 
 export class DurableServer extends DurableObject<any> {
 	_TYPE: any = 'DURABLE_SERVER';
@@ -59,6 +62,7 @@ export class DurableServer extends DurableObject<any> {
 	// @ts-ignore
 	out: Router;
 	meta = {} as DurableMeta;
+	onUnHandledMessage?: UnHandledMessageHandler;
 	onArrayBufferMessage?: ArrayBufferMessageHandler;
 	onConnectionOpen?: (ws: WebSocket, session: Session) => void;
 	onConnectionClose?: (ws: WebSocket, session: Session) => void;
@@ -117,7 +121,7 @@ export class DurableServer extends DurableObject<any> {
 		ctx.blockConcurrencyWhile(async () => {
 			const locals = this.opts?.locals;
 			if (typeof locals === 'function') {
-				this.locals = await locals(env, ctx);
+				this.locals = await locals(this.event({}));
 			} else if (locals) {
 				this.locals = locals;
 			}
@@ -176,7 +180,7 @@ export class DurableServer extends DurableObject<any> {
 		this.meta = meta;
 	}
 
-	async handleRpc(request: Request) {
+	async handleRpc(request: Request): Promise<Response> {
 		const event = this.durableEvent(request);
 		try {
 			return withCookies(await handleRequest(event, this.router), event);
@@ -185,7 +189,8 @@ export class DurableServer extends DurableObject<any> {
 		}
 	}
 
-	async fetch(request: Request) {
+	// @ts-ignore
+	async fetch(request: Request): Promise<Response> {
 		if (!this.out && !this.in) {
 			throw error('SERVICE_UNAVAILABLE');
 		}
@@ -245,6 +250,14 @@ export class DurableServer extends DurableObject<any> {
 			if (!this.in) {
 				throw error('SERVICE_UNAVAILABLE');
 			}
+			const handler = getHandler(this.in, String(type).split('.')) as Handler<any, any, any, any>;
+			if (!handler) {
+				if (this.onUnHandledMessage) {
+					this.onUnHandledMessage(ws, tryParse(message));
+				} else {
+					throw error('SERVICE_UNAVAILABLE');
+				}
+			}
 			const { type: messageType, data: messageData, id: messageId } = parse(message as string);
 			id = messageId;
 			type = messageType;
@@ -254,8 +267,6 @@ export class DurableServer extends DurableObject<any> {
 			this.opts?.rateLimiters &&
 				this.opts?.rateLimiters &&
 				(await rateLimit(this.env, this.opts?.rateLimiters, Object.assign({}, event, { type, data })));
-
-			const handler = getHandler(this.in, String(type).split('.')) as Handler<any, any, any, any>;
 
 			const parsedData = await validate(handler?.schema, data);
 			const response = await handler?.call(event, parsedData);

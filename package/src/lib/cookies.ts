@@ -1,15 +1,11 @@
 import { type CookieSerializeOptions, serialize } from 'cookie';
+import type { Request } from '@cloudflare/workers-types';
 
 export class Cookies {
-	requestCookies: Map<string, string>;
-	responseCookies: Map<string, { value: string; options?: CookieSerializeOptions }>;
-	private request: Request;
+	requestCookies: Map<string, string> = new Map();
+	responseCookies: Map<string, { value: string; options?: CookieSerializeOptions }> = new Map();
 
-	constructor(request: Request) {
-		this.request = request;
-		this.requestCookies = new Map();
-		this.responseCookies = new Map();
-	}
+	constructor(private request: Request) {}
 
 	private createRequestCookies(): void {
 		const cookieHeader = this.request.headers.get('Cookie');
