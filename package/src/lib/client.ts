@@ -1,7 +1,7 @@
-import { type Client, type MaybePromise, type Server, Meta } from './types';
+import { type Client, type MaybePromise, type Server } from './types';
 import { createDocumentConnection, createWebSocketConnection } from './websocket';
 import { tryParse } from './utils';
-import { deform, form } from './transform';
+import { deform, form, parse } from './transform';
 
 export type ClientMeta = {
 	name: string | null;
@@ -12,6 +12,7 @@ export type ClientMeta = {
 	doc: boolean;
 };
 
+type ApiProxyOutput = { path: string[]; payload: any; object: ClientMeta; callbackFunction: any };
 const defaultObject = () =>
 	({
 		name: null,
@@ -22,8 +23,8 @@ const defaultObject = () =>
 		doc: false,
 	}) satisfies ClientMeta;
 
-export const createRecursiveProxy = (
-	callback: (opts: { path: string[]; payload: any; object: ClientMeta; callbackFunction: any }) => unknown,
+export const createApiProxy = (
+	callback: (opts: ApiProxyOutput) => unknown,
 	object: ClientMeta = defaultObject(),
 	path: string[] = [],
 	payload: unknown[] = [],
@@ -63,7 +64,7 @@ export const createRecursiveProxy = (
 				};
 			}
 
-			return createRecursiveProxy(callback, object, [...path, key], payload, callbackFunction);
+			return createApiProxy(callback, object, [...path, key], payload, callbackFunction);
 		},
 		apply(_1, _2, args) {
 			if (!object.id) {
@@ -72,7 +73,7 @@ export const createRecursiveProxy = (
 			} else {
 				object.call = true;
 			}
-			return createRecursiveProxy(callback, object, path, args[0], args[1]);
+			return createApiProxy(callback, object, path, args[0], args[1]);
 		},
 	});
 	return proxy;
@@ -80,10 +81,14 @@ export const createRecursiveProxy = (
 
 export type ClientOptions = {
 	endpoint: string;
+	throwOnError?: boolean;
 	headers?: HeadersInit | (<I = unknown>({ path, input }: { path: string; input: I }) => MaybePromise<HeadersInit>);
 	fetch?: typeof fetch;
 	onError?: (error: unknown, response: Response) => void;
+	onResponse?: (response: Response) => void;
 	includeCredentials?: boolean;
+	server?: string;
+	jsonMode?: boolean;
 };
 
 export const createClient = <
@@ -91,21 +96,22 @@ export const createClient = <
 	N extends S extends Record<string, Server> ? keyof S : never = never,
 >({
 	endpoint,
+	throwOnError = false,
 	headers,
 	fetch: f = fetch,
-	onError = () => {},
-	// @ts-ignore
+	onError,
+	onResponse,
 	server,
 	includeCredentials = true,
-}: ClientOptions & (S extends Record<string, Server> ? { server: N } : {})) => {
-	return createRecursiveProxy(async ({ path, payload, object, callbackFunction }) => {
+	jsonMode = false,
+}: ClientOptions & (S extends Record<string, Server> ? { server: N } : { server?: never })) => {
+	return createApiProxy(async ({ path, payload, object, callbackFunction }: ApiProxyOutput) => {
 		const url = new URL(endpoint);
 		if (server) {
 			path.unshift(`[${server}]`);
 		}
 
 		url.pathname = path.join('/');
-
 		if (object.websocket) {
 			return createWebSocketConnection(url, payload);
 		}
@@ -136,7 +142,7 @@ export const createClient = <
 
 			headers: Object.assign(
 				{
-					'x-flarepc-client': 'true',
+					'x-flarepc-client': jsonMode ? 'json' : 'form',
 				},
 				typeof headers === 'function'
 					? await headers({
@@ -146,20 +152,27 @@ export const createClient = <
 					: headers,
 			),
 		}).then(async (res) => {
+			onResponse?.(res as any);
 			if (res.status !== 200) {
-				onError?.(
-					{
-						// @ts-ignore
-						...(await res.clone().json()),
-						status: res.status,
-						statusText: res.statusText,
-					},
+				const error = {
 					// @ts-ignore
-					res.clone(),
+					...(await res.clone().json()),
+					status: res.status,
+					statusText: res.statusText,
+				};
+				onError?.(
+					error,
+
+					res.clone() as any,
 				);
-				throw new Error(res.statusText);
+				if (throwOnError) {
+					throw new Error(res.statusText);
+				} else {
+					return [null, error];
+				}
 			} else {
-				if (res.headers.get('content-type') === 'text/event-stream') {
+				const contentType = res.headers.get('content-type');
+				if (contentType === 'text/event-stream') {
 					const reader = res.body!.getReader();
 					const decoder = new TextDecoder();
 					let buffer = '';
@@ -188,9 +201,11 @@ export const createClient = <
 						}
 						callback(decoder.decode(value), done);
 					}
-				} else if (res.headers.get('content-type')?.includes('multipart/form-data')) {
+				} else if (contentType?.includes('multipart/form-data')) {
 					const formData = await res.formData();
-					return deform(formData as FormData);
+					return [deform(formData as FormData), null];
+				} else if (jsonMode) {
+					return [parse(await res.text()), null];
 				}
 			}
 		});

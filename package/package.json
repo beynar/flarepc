@@ -1,6 +1,6 @@
 {
 	"name": "flarepc",
-	"version": "0.0.37",
+	"version": "0.0.60",
 	"private": false,
 	"scripts": {
 		"deploy": "wrangler deploy",
@@ -15,25 +15,29 @@
 			"types": "./dist/index.d.ts",
 			"import": "./dist/index.mjs",
 			"module": "./dist/index.mjs",
-			"require": "./dist/index.js"
+			"require": "./dist/index.js",
+			"default": "./dist/index.js"
 		},
 		"./client": {
 			"types": "./dist/client.d.ts",
 			"import": "./dist/client.mjs",
 			"module": "./dist/client.mjs",
-			"require": "./dist/client.js"
+			"require": "./dist/client.js",
+			"default": "./dist/client.js"
 		},
 		"./yjs": {
 			"types": "./dist/yjs/index.d.ts",
 			"import": "./dist/yjs/index.mjs",
 			"module": "./dist/yjs/index.mjs",
-			"require": "./dist/yjs/index.js"
+			"require": "./dist/yjs/index.js",
+			"default": "./dist/yjs/index.js"
 		},
 		"./yjs/client": {
 			"types": "./dist/yjs/client.d.ts",
 			"import": "./dist/yjs/client.mjs",
 			"module": "./dist/yjs/client.mjs",
-			"require": "./dist/yjs/client.js"
+			"require": "./dist/yjs/client.js",
+			"default": "./dist/yjs/client.js"
 		}
 	},
 	"types": "./dist/index.d.ts",
@@ -43,25 +47,39 @@
 		"!dist/**/*.spec.*"
 	],
 	"devDependencies": {
-		"@cloudflare/vitest-pool-workers": "^0.4.17",
-		"@cloudflare/workers-types": "^4.20240729.0",
+		"@cloudflare/vitest-pool-workers": "^0.4.31",
+		"@cloudflare/workers-types": "^4.20241216.0",
+		"@types/bun": "^1.1.14",
 		"@types/cookie": "^0.6.0",
-		"@vitest/ui": "^1.5.0",
-		"tsup": "^8.2.4",
-		"typescript": "^5.5.4",
+		"@vitest/ui": "^1.6.0",
+		"tsup": "^8.3.5",
+		"type-fest": "^4.30.1",
+		"typescript": "^5.7.2",
 		"vitest": "1.5.0",
-		"wrangler": "^3.68.0"
+		"wrangler": "^3.95.0"
 	},
 	"dependencies": {
-		"@types/bun": "^1.1.6",
 		"arktype": "2.0.0-beta.2",
 		"cookie": "^0.6.0",
-		"devalue": "^5.0.0",
-		"lib0": "^0.2.97",
+		"devalue": "^5.1.1",
+		"lib0": "^0.2.99",
 		"mrmime": "^2.0.0",
-		"valibot": "^0.37.0",
+		"valibot": "^0.38.0",
 		"y-protocols": "^1.0.6",
-		"yjs": "^13.6.18",
-		"zod": "^3.23.8"
+		"yjs": "^13.6.20",
+		"zod": "^3.24.1"
+	},
+	"typesVersions": {
+		"*": {
+			"yjs": [
+				"./dist/yjs/index.d.ts"
+			],
+			"yjs/client": [
+				"./dist/yjs/client.d.ts"
+			],
+			"client": [
+				"./dist/client.d.ts"
+			]
+		}
 	}
 }

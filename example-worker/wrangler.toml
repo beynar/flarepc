@@ -1,7 +1,10 @@
 #:schema node_modules/wrangler/config-schema.json
 name = "example-worker"
 main = "src/index.ts"
-compatibility_date = "2024-07-29"
+compatibility_date = "2024-08-19"
+compatibility_flags = [
+	"nodejs_compat_v2"
+]
 
 [site]
 bucket = "./public"
@@ -21,7 +24,7 @@ services = [
 #   queue = "Queue"
 #   max_batch_size = 10
 #   max_batch_timeout = 30
-#   max_retries = 10
+#   max_retries = 10^
 #   dead_letter_queue = "Queue-dlq"
 
 [[unsafe.bindings]]

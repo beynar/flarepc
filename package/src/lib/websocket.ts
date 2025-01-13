@@ -3,6 +3,7 @@ import { createRecursiveProxy } from './recursiveProxy';
 import type { DocProviderConstructor, MessageHandlers, MessagePayload, Participant, Router, RouterPaths, WSAPI } from './types';
 import { ObservableV2 } from 'lib0/observable';
 import type { DocProvider, DocProviderOptions } from './yjs/client';
+import { WS_RESPONSE_TYPE } from './utils';
 
 export type WebSocketState = 'RECONNECTING' | 'CONNECTED' | 'CLOSED';
 
@@ -38,6 +39,7 @@ export class WebSocketClient<I extends Router = Router, O extends Router = Route
 	private pongTimeout: number = 10000;
 	private pingTimer?: any;
 	private pongTimer?: any;
+	private wsPromises = new Map<string, (value: any) => any>();
 
 	opts: ConnectOptions<O>;
 	url: string;
@@ -61,6 +63,17 @@ export class WebSocketClient<I extends Router = Router, O extends Router = Route
 		if (this.pongTimer) clearTimeout(this.pongTimer);
 	}
 
+	private wsPromise = (id: string) => {
+		const promise = new Promise((resolve, reject) => {
+			const resolveWithCleanUp = (value: any[]) => {
+				this.wsPromises.delete(id);
+				resolve.call(this, value);
+			};
+			this.wsPromises.set(id, resolveWithCleanUp);
+		});
+		return promise;
+	};
+
 	destroy = () => {
 		this.ws?.close();
 		this.abortController?.abort();
@@ -68,14 +81,17 @@ export class WebSocketClient<I extends Router = Router, O extends Router = Route
 		this.setState('CLOSED');
 	};
 
-	send = createRecursiveProxy(async ({ type, data }) => {
-		const message = stringify({ type, data });
+	send = createRecursiveProxy(({ type, data }) => {
+		const id = crypto.randomUUID();
+		const message = stringify({ type, data, id });
 		if (!this.ws || this.ws.readyState !== 1) {
 			this.sendQueue.push(message);
 		} else {
 			this.ws.send(message);
 		}
+		return this.wsPromise(id);
 	}) as WSAPI<I>;
+
 	sendRaw = (data: any) => {
 		if (!this.ws || this.ws.readyState !== 1) {
 			this.sendQueue.push(data);
@@ -104,6 +120,7 @@ export class WebSocketClient<I extends Router = Router, O extends Router = Route
 			this.destroy();
 		}
 	};
+
 	private setState = <S extends WebSocketState>(state: S) => {
 		if (this.state !== state) {
 			this.state = state;
@@ -111,6 +128,7 @@ export class WebSocketClient<I extends Router = Router, O extends Router = Route
 			this.emit('stateChange', [state, this]);
 		}
 	};
+
 	open = () => {
 		return new Promise((resolve, reject) => {
 			this.abortController?.abort();
@@ -186,11 +204,13 @@ export class WebSocketClient<I extends Router = Router, O extends Router = Route
 			if (e.data === 'pong') {
 				if (this.pongTimer) clearTimeout(this.pongTimer);
 			} else {
-				const { type, data } = parse(e.data as string) as MessagePayload<O, RouterPaths<O>>;
+				const { type, data, id, error } = parse(e.data as string) as MessagePayload<O, RouterPaths<O>>;
 				if (type === 'presence') {
 					this.presence = data as Participant[];
 
 					this.emit('presence', [this.presence, this]);
+				} else if (type === WS_RESPONSE_TYPE) {
+					id && this.wsPromises.get(id)?.([data, error]);
 				} else if (type === 'error') {
 					this.emit('error', [data, this]);
 				} else {
@@ -231,19 +251,23 @@ export const retrievePreviousClient = <I extends Router, O extends Router>(url: 
 	return (globalThis as any).__flarews.get(url) as WebSocketClient<I, O> | undefined;
 };
 
-export const createWebSocketConnection = async <I extends Router, O extends Router>(url: URL, opts?: ConnectOptions<O>) => {
-	const searchParams = new URLSearchParams(opts?.searchParams);
-	url.search = searchParams.toString();
-	const endpoint = url.toString();
-
-	const previousClient = opts?.dedupeConnection !== false && retrievePreviousClient<I, O>(endpoint);
-
-	const client = previousClient || new WebSocketClient<I, O>(endpoint, opts);
-
-	if (!previousClient) {
-		await client.open();
-	}
-	return client;
+export const createWebSocketConnection = <I extends Router, O extends Router>(
+	url: URL,
+	opts?: ConnectOptions<O>,
+): Promise<WebSocketClient<I, O>> => {
+	return new Promise((resolve, reject) => {
+		const searchParams = new URLSearchParams(opts?.searchParams);
+		url.search = searchParams.toString();
+		const endpoint = url.toString();
+		const previousClient = opts?.dedupeConnection !== false && retrievePreviousClient<I, O>(endpoint);
+		const client = previousClient || new WebSocketClient<I, O>(endpoint, opts);
+		if (!previousClient) {
+			client.open().then(() => {
+				resolve(client);
+			});
+		}
+		return resolve(client);
+	});
 };
 
 export const retrievePreviousProvider = <I extends Router, O extends Router>(endpoint: string) => {

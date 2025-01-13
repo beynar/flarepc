@@ -1,5 +1,5 @@
-import { procedure, createServer, createDurableServer, InferApiTypes, createServers } from 'flarepc';
-import { createDurableDoc } from 'flarepc/yjs';
+import { procedure, createServer, createDurableServer, InferApiTypes, createServers, error } from 'flarepc';
+
 import { string, optional, object } from 'valibot';
 import { DurableObject } from 'cloudflare:workers';
 
@@ -50,7 +50,12 @@ const router = {
 // const TestDurable = createDurableDoc({});
 
 // export { TestDurable };
-export class TestDurable extends createDurableDoc() {
+export class TestDurable extends createDurableServer({
+	locals: {},
+}) {
+	// blockConcurrencyWhile = async () => {
+	// 	console.log('blockConcurrencyWhile');
+	// };
 	out = {
 		message: procedure('out')
 			.input(object({ message: optional(string(), 'hello') }))
@@ -73,7 +78,9 @@ export class TestDurable extends createDurableDoc() {
 		message: procedure('in')
 			.input(object({ message: string() }))
 			.handle(({ input, event }) => {
-				console.log(input);
+				return {
+					hello: input.message,
+				};
 			}),
 		paul: {
 			louis: procedure('in')
@@ -86,6 +93,11 @@ export class TestDurable extends createDurableDoc() {
 		},
 	};
 	router = {
+		test: procedure('durable').handle(async ({ event }) => {
+			return {
+				hello: 'world',
+			};
+		}),
 		update: procedure('durable').handle(async ({ event }) => {
 			const doc = this.doc;
 
@@ -142,11 +154,20 @@ const publicRouter = {
 				hello: 'world',
 			};
 		}),
-	'(public)': procedure().handle(async ({ event }) => {
+	test: procedure().handle(async ({ event }) => {
 		return {
 			hello: 'world',
 		};
 	}),
+	caca: {
+		prout: {
+			vomi: procedure().handle(async ({ event }) => {
+				return {
+					caca: 'world',
+				};
+			}),
+		},
+	},
 };
 
 const adminRouter = {
@@ -158,6 +179,16 @@ const adminRouter = {
 			};
 		}),
 };
+
+const server_ = createServer({
+	router: publicRouter,
+	objects: {
+		TestDurable: TestDurable,
+	},
+	exclude: {
+		test: true,
+	},
+});
 
 const servers = createServers({
 	public: {
@@ -182,6 +213,7 @@ const servers = createServers({
 				console.log(event);
 			},
 		},
+		exclude: {},
 		locals: () => {
 			return {
 				prod: true,
@@ -195,7 +227,7 @@ const servers = createServers({
 });
 
 export type Servers = typeof servers.infer;
-export type Server = typeof server.infer;
+export type Server = typeof server_.infer;
 export type API = InferApiTypes<Server>;
 export type PublicServer = typeof servers.infer.public;
 export type AdminServer = typeof servers.infer.admin;

@@ -1,4 +1,4 @@
-import { validate, RequestEvent, deform, form, DurableRequestEvent, Router, getHandler, handleError, error } from '.';
+import { validate, RequestEvent, deform, form, DurableRequestEvent, Router, getHandler, handleError, error, stringify } from '.';
 
 export const handleRequest = async (event: DurableRequestEvent | RequestEvent, router?: Router) => {
 	if (!router) {
@@ -9,7 +9,9 @@ export const handleRequest = async (event: DurableRequestEvent | RequestEvent, r
 	const request = event.request;
 	const url = event.url;
 	const method = event.request.method;
-	const isClientRequest = event.request.headers.get('x-flarepc-client') === 'true';
+
+	const flarepcMode = event.request.headers.get('x-flarepc-client') as 'json' | 'form' | null;
+	const isClientRequest = !!flarepcMode;
 	let result: string | File | FormData | ReadableStream = JSON.stringify({
 		error: {
 			message: 'Not Found',
@@ -41,8 +43,13 @@ export const handleRequest = async (event: DurableRequestEvent | RequestEvent, r
 			if (isClientRequest) {
 				delete headers['Content-Type'];
 			}
-
-			result = isClientRequest ? form(result) : JSON.stringify(result);
+			if (flarepcMode === 'json') {
+				result = stringify(result);
+			} else if (flarepcMode === 'form') {
+				result = form(result);
+			} else {
+				result = JSON.stringify(result);
+			}
 		}
 	}
 	return new Response(result, { headers, status: 200 });

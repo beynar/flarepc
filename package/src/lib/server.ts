@@ -24,8 +24,8 @@ import {
 	CronHandler,
 	getJurisdictionalNamespace,
 	DurableObjects,
-	CombinedServerOptions,
 } from '.';
+import type { Request } from '@cloudflare/workers-types';
 
 const isHandler = (handler: any): handler is Handler<any, any, any, any> => {
 	return 'call' in handler;
@@ -68,11 +68,29 @@ const getDurableServer = async <O extends DurableObjects>({
 	return null;
 };
 
-const executeFetch = async (
+const isPathExcluded = (event: RequestEvent, exclude?: object): boolean => {
+	if (!exclude) return false;
+	const {
+		path,
+		meta: { name },
+	} = event;
+	let isExcluded = false;
+	let current = exclude;
+
+	$: for (const segment of path) {
+		isExcluded = isExcluded || current[segment as keyof typeof current] === true;
+		current = current?.[segment as keyof typeof current] as typeof exclude;
+		if (isExcluded || !current) break $;
+	}
+
+	return isExcluded;
+};
+
+const executeFetch = async <O extends ServerOptions>(
 	request: Request,
 	env: Env,
 	ctx: ExecutionContext,
-	opts: ServerOptions,
+	opts: O,
 	server: string | null = null,
 ): Promise<Response> => {
 	const event = await buildEvent(request, env, ctx, opts, server);
@@ -91,6 +109,10 @@ const executeFetch = async (
 
 	let response: Response | undefined;
 	$: try {
+		// if (isPathExcluded(event, opts.exclude)) {
+		// 	throw new FLARERROR('NOT_FOUND');
+		// }
+
 		for (let handler of (opts.before || []).concat(preflight || [], createStaticServer(opts.static)) || []) {
 			response = (await handler(event)) ?? response;
 			if (response) break $;
@@ -103,8 +125,9 @@ const executeFetch = async (
 		if (stub && event.meta?.name && event.meta?.id) {
 			await stub.setMeta(event.meta);
 			if (isWebSocketConnect) {
-				return await stub.fetch(request);
+				return await stub.fetch(request.url);
 			} else {
+				// @ts-ignore
 				response = await stub.handleRpc(request);
 			}
 		} else {
@@ -134,10 +157,11 @@ const executeQueue = (batch: MessageBatch, env: Env, ctx: ExecutionContext, rout
 					batch,
 					ctx,
 					env,
-					locals: typeof locals === 'function' ? await locals(new Request('https://queue.request.dev'), env, ctx) : {},
+					locals: {},
 					message,
 					path,
 				} satisfies QueueRequestEvent;
+				event.locals = typeof locals === 'function' ? await locals(event) : locals;
 				try {
 					await handler.call(event, validate(handler?.schema, payload));
 					message.ack();
@@ -157,14 +181,71 @@ const executeCron = async (controller: ScheduledController, env: Env, ctx: Execu
 	const event = Object.assign(controller, {
 		ctx,
 		env,
-		locals: typeof opts.locals === 'function' ? await opts.locals(new Request('https://cron.request.dev'), env, ctx) : opts.locals,
+		locals: {},
 		queue: new QueueHandler(env, ctx).send,
 	}) satisfies CronRequestEvent;
+	event.locals = typeof opts.locals === 'function' ? await opts.locals(event) : opts.locals;
 	return handler(event);
+};
+
+// type Filters<R extends Router | undefined, O extends DurableObjects | undefined> = {
+// 	exclude?: BooleanRoutes<R, O>;
+// 	include?: BooleanRoutes<R, O>;
+// };
+
+type RecordZ<K extends keyof any> = {
+	[P in K]: ServerOptions;
+};
+type ServersOptions<S extends string = string> = RecordZ<S>;
+
+export const createServers = <S extends string, O extends ServersOptions<S>>(opts: O) => {
+	const servers = Object.keys(opts) as S[];
+
+	const crons = combineCrons(opts);
+
+	const queues = combineQueues(opts);
+
+	return {
+		async fetch(request: Request, env: Env, ctx: ExecutionContext) {
+			const server = servers.find((server) => decodeURI(request.url).includes(`[${server}]`));
+
+			if (!server || !(server in opts)) {
+				return handleError(new FLARERROR('NOT_FOUND', 'server not found'));
+			}
+
+			return executeFetch(request, env, ctx, opts[server], server);
+		},
+		queue: queues
+			? (batch: MessageBatch, env: Env, ctx: ExecutionContext) => {
+					const { router, server } = queues[batch.queue];
+					return executeQueue(batch, env, ctx, router, opts[server as S]);
+				}
+			: undefined,
+		scheduled: crons
+			? async (controller: ScheduledController, env: Env, ctx: ExecutionContext) => {
+					const { handler, server } = crons[controller.cron];
+					for (const cron in crons) {
+						if (cron.replaceAll(' ', '') === controller.cron.replaceAll(' ', '')) {
+							await executeCron(controller, env, ctx, handler, opts[server as S]);
+							break;
+						}
+					}
+				}
+			: undefined,
+		infer: {} as {
+			[K in keyof O]: {
+				router: O[K]['router'];
+				objects: O[K]['objects'] extends DurableObjects
+					? { [P in keyof O[K]['objects']]: InferDurableApi<O[K]['objects'][P]['prototype']> }
+					: undefined;
+			};
+		},
+	};
 };
 
 export const createServer = <R extends Router, O extends DurableObjects>(opts: ServerOptions<R, O>) => ({
 	async fetch(r: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+		// @ts-ignore
 		return executeFetch(r, env, ctx, opts);
 	},
 	infer: {} as {
@@ -178,44 +259,6 @@ export const createServer = <R extends Router, O extends DurableObjects>(opts: S
 		? (event: ScheduledController, env: Env, ctx: ExecutionContext) => executeCron(event, env, ctx, opts.crons![event.cron], opts)
 		: undefined,
 });
-
-export const createServers = <CS extends CombinedServerOptions>(opts: CS) => {
-	const servers = Object.keys(opts);
-	const crons = combineCrons(opts);
-	const queues = combineQueues(opts);
-	return {
-		async fetch(request: Request, env: Env, ctx: ExecutionContext) {
-			const server = servers.find((server) => request.url.includes(`[${server}]`));
-
-			if (!server || !(server in opts)) {
-				return handleError(new FLARERROR('NOT_FOUND', 'server not found'));
-			}
-
-			return executeFetch(request, env, ctx, opts[server], server);
-		},
-		queue: queues
-			? (batch: MessageBatch, env: Env, ctx: ExecutionContext) => {
-					const { router, server } = queues[batch.queue];
-					return executeQueue(batch, env, ctx, router, opts[server]);
-				}
-			: undefined,
-		scheduled: crons
-			? (controller: ScheduledController, env: Env, ctx: ExecutionContext) => {
-					const { handler, server } = crons[controller.cron];
-					return executeCron(controller, env, ctx, handler, opts[server]);
-				}
-			: undefined,
-		infer: {} as {
-			[K in keyof CS]: {
-				router: CS[K]['router'];
-				objects: CS[K]['objects'] extends DurableObjects
-					? { [KK in keyof CS[K]['objects']]: InferDurableApi<CS[K]['objects'][KK]['prototype']> }
-					: undefined;
-			};
-		},
-	};
-};
-
 export const combineRouters = <R extends Router[]>(...routers: R) => {
 	const router: Router = {};
 
@@ -225,7 +268,7 @@ export const combineRouters = <R extends Router[]>(...routers: R) => {
 	return router as CombinedRouters<R>;
 };
 
-export const combineCrons = (opts: CombinedServerOptions) => {
+export const combineCrons = (opts: ServersOptions) => {
 	let hasCrons = false;
 	const CRONS: Record<
 		string,
@@ -249,7 +292,7 @@ export const combineCrons = (opts: CombinedServerOptions) => {
 	return hasCrons ? CRONS : undefined;
 };
 
-export const combineQueues = (opts: CombinedServerOptions) => {
+export const combineQueues = (opts: ServersOptions) => {
 	const QUEUES: Record<
 		string,
 		{
@@ -278,3 +321,78 @@ export const combineQueues = (opts: CombinedServerOptions) => {
 	}
 	return hasQueues ? QUEUES : undefined;
 };
+
+const tast = [
+	{
+		image: {
+			attributes: {
+				itemID: 'gid://shopify/Metafield/22890933125361',
+				itemType: 'file_reference',
+				itemProp: 'home_reassurance@fr:meta-cms-y9qye2mtYK',
+			},
+			value: {
+				alt: 'image',
+				height: 512,
+				width: 512,
+				src: 'https://cdn.shopify.com/s/files/1/0355/0769/9852/files/kisspng-flag-of-france-emoji-flag-of-italy-mexico-flag-emoji-5b45acd45f90e5.2998003715312928843915_4000x.png?v=1673542231',
+				id: 'gid://shopify/MediaImage/30991431532785',
+			},
+		},
+		label: {
+			attributes: {
+				itemID: 'gid://shopify/Metafield/22890933092593',
+				itemType: 'multi_line_text_field',
+				itemProp: 'home_reassurance@fr:meta-cms-5yqFC8I1Ma',
+			},
+			value: '<p>Concept 100% Français</p>',
+		},
+	},
+	{
+		image: {
+			attributes: {
+				itemID: 'gid://shopify/Metafield/22890933190897',
+				itemType: 'file_reference',
+				itemProp: 'home_reassurance@fr:meta-cms-kV-2PGBzpP',
+			},
+			value: {
+				alt: 'image',
+				height: 100,
+				width: 100,
+				src: 'https://cdn.shopify.com/s/files/1/0355/0769/9852/files/camion-de-livraison.png?v=1669917660',
+				id: 'gid://shopify/MediaImage/44078630994261',
+			},
+		},
+		label: {
+			attributes: {
+				itemID: 'gid://shopify/Metafield/22890933158129',
+				itemType: 'multi_line_text_field',
+				itemProp: 'home_reassurance@fr:meta-cms-p5HvXqKUN5',
+			},
+			value: '<p>Livraison garantie avant Noël</p>',
+		},
+	},
+	{
+		image: {
+			attributes: {
+				itemID: 'gid://shopify/Metafield/22890933256433',
+				itemType: 'file_reference',
+				itemProp: 'home_reassurance@fr:meta-cms-qDLHFXFqrm',
+			},
+			value: {
+				alt: 'image',
+				height: 100,
+				width: 100,
+				src: 'https://cdn.shopify.com/s/files/1/0355/0769/9852/files/Cadeau_2a528d71-2429-4af7-9bcc-cdcd0017211f_4000x.png?v=1700576112',
+				id: 'gid://shopify/MediaImage/44361818997077',
+			},
+		},
+		label: {
+			attributes: {
+				itemID: 'gid://shopify/Metafield/22890933223665',
+				itemType: 'multi_line_text_field',
+				itemProp: 'home_reassurance@fr:meta-cms-ZwWqCh4My4',
+			},
+			value: '<p>La cadeau parfait pour un(e) fan de sport</p>',
+		},
+	},
+];

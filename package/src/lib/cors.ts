@@ -1,5 +1,6 @@
 // Shamelessly copied and slightly adapted from https://github.com/kwhitley/itty-router
 import { MaybePromise, RequestEvent } from '.';
+import type { Request } from '@cloudflare/workers-types';
 
 export type CorsOptions = {
 	credentials?: true;

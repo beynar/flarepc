@@ -10,6 +10,7 @@ import {
 	ServerOptions,
 	GetObjectJurisdictionOrLocationHint,
 } from '.';
+import type { Request } from '@cloudflare/workers-types';
 
 const getMetaFromRequest = async ({
 	event,
@@ -18,7 +19,9 @@ const getMetaFromRequest = async ({
 	event: RequestEvent;
 	getObjectJurisdictionOrLocationHint?: GetObjectJurisdictionOrLocationHint;
 }): Promise<void> => {
-	[event.meta.name, event.meta.id] = event.request.url.match(/\/\(([^:]+):([^)]+)\)/)?.slice(1) || [null, null];
+	[event.meta.name, event.meta.id] = decodeURI(event.request.url)
+		.match(/\/\(([^:]+):([^)]+)\)/)
+		?.slice(1) || [null, null];
 
 	if (event.meta.id === 'random') {
 		event.meta.id = crypto.randomUUID();
@@ -59,17 +62,18 @@ export const buildEvent = async (
 		ctx,
 		env,
 		path: [],
-		locals: typeof opts.locals === 'function' ? await opts.locals(request, env, ctx) : opts.locals,
+		locals: {},
 		queue: new QueueHandler(env, ctx, opts.queues).send,
 		request,
 		static: new StaticHandler(env, ctx),
 		meta: { name: null, id: null, jurisdiction: null, locationHint: null, server },
-		url: new URL(request.url),
+		url: new URL(decodeURI(request.url)),
 		cookies: new Cookies(request),
 	} satisfies RequestEvent;
 
 	getPath(event);
 	await getMetaFromRequest({ event, getObjectJurisdictionOrLocationHint: opts.getObjectJurisdictionOrLocationHint });
+	event.locals = typeof opts.locals === 'function' ? await opts.locals(event) : opts.locals;
 	return event;
 };
 
@@ -102,7 +106,7 @@ export type RequestEvent = {
 	request: Request;
 	env: Env;
 	ctx: ExecutionContext;
-	locals?: Locals;
+	locals: Locals;
 	path: string[];
 	meta: Meta;
 	queue: QueueHandler['send'];

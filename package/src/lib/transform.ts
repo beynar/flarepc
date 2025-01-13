@@ -49,7 +49,7 @@ export const form = (value: unknown, formData: FormData = new FormData()) => {
 		},
 		URL: url.stringify,
 	});
-	formData.set('value', stringified);
+	formData.append('value', stringified);
 	return formData;
 };
 

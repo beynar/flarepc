@@ -5,18 +5,31 @@
 	import { api, publicApi } from '../../api';
 	import { DocProvider } from 'flarepc/yjs/client';
 	let doc = $state<Y.Doc>();
-
+	let presence = $state<any[]>([]);
 	let text = $state<string>();
 	onMount(async () => {
-		console.log('hello');
-
-		const { awareness, doc: D, client } = await publicApi.TestDurable('test').doc(DocProvider);
-		doc = D;
-		text = D.getText('text').toJSON();
-
-		D.on('update', () => {
-			text = D.getText('text').toJSON();
+		const {
+			awareness,
+			doc: D,
+			client
+		} = await publicApi.TestDurable('test').doc(DocProvider, {
+			disableBroadcast: true,
+			debounceMs: 1000
 		});
+
+		presence = client.presence;
+		doc = D;
+		client.on('presence', (e) => {
+			presence = e;
+		});
+		doc.getText('text').observe((e) => {
+			text = D.getText('text').toString();
+		});
+		text = doc.getText('text').toString();
+	});
+
+	$effect(() => {
+		console.log($state.snapshot(presence));
 	});
 </script>
 
@@ -30,14 +43,14 @@
 </button>
 <button
 	onclick={async () => {
-		doc.getText('text').insert(0, 'Hello, world!');
+		doc?.getText('text').insert(0, doc?.getText('text').toString());
 	}}
 >
 	add text
 </button>
 <button
 	onclick={async () => {
-		doc.getText('text').delete(0, doc.getText('text').length);
+		doc?.getText('text').delete(0, doc?.getText('text').length);
 	}}
 >
 	delete
