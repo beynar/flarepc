@@ -123,10 +123,7 @@ export class DurableDoc extends DurableServer {
 	declare opts: DurableDocOptions;
 	sessions = new Map<WebSocket, () => void>();
 	awarenessClients = new Set<number>();
-	setMeta(meta: DurableMeta) {
-		this.meta = meta;
-		this.ctx.storage.put(this.meta);
-	}
+
 	constructor(
 		public state: DurableObjectState,
 		public env: Env,

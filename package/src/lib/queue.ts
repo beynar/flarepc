@@ -37,12 +37,12 @@ export class QueueHandler {
 
 	send = <Q extends PickKeyType<Env, Queue>>(queueName: Q) => {
 		return createRecursiveProxy(({ type, data, opts }) => {
-			if (!this.queues || !this.env?.[queueName]) {
+			if (!this.queues || !this.env?.[queueName as keyof Env]) {
 				throw error('SERVICE_UNAVAILABLE');
 			}
 			const isBatch = type.includes('sendBatch');
 			const path = type.replace('.send', '').replace('.sendBatch', '').split('.');
-			const queue = this.env[queueName] as Queue;
+			const queue = this.env[queueName as keyof Env] as Queue;
 			const handler = getHandler(this.queues![queueName], path) as Handler<any, any, any, any>;
 			if (isBatch) {
 				let messages: string[] = [];

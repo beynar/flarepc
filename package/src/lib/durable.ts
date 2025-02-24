@@ -32,7 +32,9 @@ import {
 } from '.';
 import { rateLimit } from './ratelimit';
 import { getPath } from './requestEvent';
-import type { Request, Response as CFResponse } from '@cloudflare/workers-types';
+import type { Request } from '@cloudflare/workers-types';
+import { DurableKV } from './durableKv';
+import { Scheduler } from './scheduler';
 
 const getDefaultBroadcastPresenceTag = (opts?: DurableOptions) =>
 	opts?.broadcastPresenceTo && opts?.broadcastPresenceTo !== 'ALL' && opts?.broadcastPresenceTo !== 'NONE'
@@ -51,6 +53,9 @@ type ArrayBufferMessageHandler = (ws: WebSocket, message: ArrayBuffer) => MaybeP
 type UnHandledMessageHandler = (ws: WebSocket, message: Record<string, any>) => MaybePromise<void>;
 
 export class DurableServer extends DurableObject<any> {
+	kv: DurableKV;
+	sql: SqlStorage;
+	scheduler: Scheduler;
 	_TYPE: any = 'DURABLE_SERVER';
 	opts?: DurableOptions;
 	// @ts-expect-error this will be set in the constructor by blocking concurrency if needed
@@ -61,7 +66,8 @@ export class DurableServer extends DurableObject<any> {
 	in: Router;
 	// @ts-ignore
 	out: Router;
-	meta = {} as DurableMeta;
+	// @ts-ignore
+	tasks: Router;
 	onUnHandledMessage?: UnHandledMessageHandler;
 	onArrayBufferMessage?: ArrayBufferMessageHandler;
 	onConnectionOpen?: (ws: WebSocket, session: Session) => void;
@@ -113,24 +119,35 @@ export class DurableServer extends DurableObject<any> {
 		return event;
 	};
 
+	get meta() {
+		return this.kv.get<DurableMeta>('meta')!;
+	}
+
 	constructor(
 		public ctx: DurableObjectState,
 		public env: Env,
 	) {
 		super(ctx, env);
-		ctx.blockConcurrencyWhile(async () => {
+		this.env = env;
+		this.ctx = ctx;
+		this.sql = ctx.storage.sql;
+		this.kv = new DurableKV(ctx);
+		this.scheduler = new Scheduler(this);
+		void ctx.blockConcurrencyWhile(async () => {
+			this.kv.init();
+			this.scheduler.init();
 			const locals = this.opts?.locals;
 			if (typeof locals === 'function') {
 				this.locals = await locals(this.event({}));
 			} else if (locals) {
 				this.locals = locals;
 			}
+
 			if (this.blockConcurrencyWhile) {
 				await this.blockConcurrencyWhile?.();
 			}
 		});
-		this.env = env;
-		this.ctx = ctx;
+
 		ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping', 'pong'));
 	}
 
@@ -176,64 +193,64 @@ export class DurableServer extends DurableObject<any> {
 				}
 			}) as WSAPI<O>;
 
-	setMeta(meta: DurableMeta) {
-		this.meta = meta;
-	}
-
-	async handleRpc(request: Request): Promise<Response> {
-		const event = this.durableEvent(request);
-		try {
-			return withCookies(await handleRequest(event, this.router), event);
-		} catch (error) {
-			return handleError(error);
-		}
-	}
-
 	// @ts-ignore
-	async fetch(request: Request): Promise<Response> {
-		if (!this.out && !this.in) {
-			throw error('SERVICE_UNAVAILABLE');
-		}
-		let session: Session | undefined = undefined;
-		let ws: WebSocket | undefined = undefined;
-		try {
-			const [client, server] = Object.values(new WebSocketPair());
-			ws = server;
-			const event = this.durableEvent(request);
-			let {
-				session: sessionData = {},
-				participant = { id: crypto.randomUUID() },
-				tags = [],
-			} = (await this.opts?.getSessionDataAndParticipant?.({ event, object: this })) || {};
-
-			if (!participant.id) {
-				participant.id = crypto.randomUUID();
+	async fetch(request: Request & { cf: { meta: DurableMeta; isWebSocketConnect: boolean } }): Promise<Response> {
+		this.kv.set('meta', request.cf.meta);
+		console.log('client-id', request.headers.get('client-id'));
+		if (request.cf.isWebSocketConnect) {
+			if (!this.out && !this.in) {
+				throw error('SERVICE_UNAVAILABLE');
 			}
+			let session: Session | undefined = undefined;
+			let ws: WebSocket | undefined = undefined;
+			try {
+				const [client, server] = Object.values(new WebSocketPair());
+				ws = server;
+				const event = this.durableEvent(request);
+				let {
+					session: sessionData = {},
+					participant = { id: crypto.randomUUID() },
+					tags = [],
+				} = (await this.opts?.getSessionDataAndParticipant?.({ event, object: this })) || {};
 
-			session = {
-				id: crypto.randomUUID(),
-				participant,
-				connected: true,
-				createdAt: Date.now(),
-				data: sessionData,
-				meta: this.meta,
-			};
+				if (!participant.id) {
+					participant.id = crypto.randomUUID();
+				}
 
-			serializeSession(server, session);
+				session = {
+					id: crypto.randomUUID(),
+					participant,
+					connected: true,
+					createdAt: Date.now(),
+					data: sessionData,
+				};
 
-			this.ctx.acceptWebSocket(server, tags);
-			this.sendPresence();
-			this.onConnectionOpen?.(server, session);
-			return withCookies(
-				new Response(null, {
-					status: 101,
-					webSocket: client,
-				}),
-				event,
-			);
-		} catch (error) {
-			this.opts?.onError?.({ error, ws, session, object: this });
-			return handleError(error);
+				serializeSession(server, session);
+
+				this.ctx.acceptWebSocket(server, tags);
+
+				this.sendPresence();
+
+				this.onConnectionOpen?.(server, session);
+
+				return withCookies(
+					new Response(null, {
+						status: 101,
+						webSocket: client,
+					}),
+					event,
+				);
+			} catch (error) {
+				this.opts?.onError?.({ error, ws, session, object: this });
+				return handleError(error);
+			}
+		} else {
+			const event = this.durableEvent(request);
+			try {
+				return withCookies(await handleRequest(event, this.router), event);
+			} catch (error) {
+				return handleError(error);
+			}
 		}
 	}
 
@@ -243,14 +260,21 @@ export class DurableServer extends DurableObject<any> {
 		}
 
 		const session = deserializeSession(ws);
+
 		let id: string | undefined = undefined;
 		let data: any | undefined = undefined;
 		let type: string | undefined = undefined;
+		console.log({ session, data, type, message }, this.in);
 		try {
+			const { type: messageType, data: messageData, id: messageId } = parse(message as string);
+			id = messageId;
+			type = messageType;
+			data = messageData;
 			if (!this.in) {
 				throw error('SERVICE_UNAVAILABLE');
 			}
 			const handler = getHandler(this.in, String(type).split('.')) as Handler<any, any, any, any>;
+			console.log({ handler });
 			if (!handler) {
 				if (this.onUnHandledMessage) {
 					this.onUnHandledMessage(ws, tryParse(message));
@@ -258,12 +282,8 @@ export class DurableServer extends DurableObject<any> {
 					throw error('SERVICE_UNAVAILABLE');
 				}
 			}
-			const { type: messageType, data: messageData, id: messageId } = parse(message as string);
-			id = messageId;
-			type = messageType;
-			data = messageData;
 
-			const event = this.event({ from: { session, ws } });
+			const event = this.event({ session, ws });
 			this.opts?.rateLimiters &&
 				this.opts?.rateLimiters &&
 				(await rateLimit(this.env, this.opts?.rateLimiters, Object.assign({}, event, { type, data })));

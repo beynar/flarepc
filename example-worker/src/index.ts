@@ -1,9 +1,6 @@
 import { procedure, createServer, createDurableServer, InferApiTypes, createServers, error } from 'flarepc';
-
 import { string, optional, object } from 'valibot';
 import { DurableObject } from 'cloudflare:workers';
-
-import { z } from 'zod';
 
 import Groq from 'groq-sdk';
 declare global {
@@ -31,12 +28,6 @@ declare global {
 // 	}
 // }
 
-const zodSchema = z.object({
-	name: z.string(),
-	platform: z.enum(['android', 'ios']),
-	versions: z.array(z.string()),
-});
-
 const router = {
 	text: procedure()
 		.input(string())
@@ -52,10 +43,13 @@ const router = {
 // export { TestDurable };
 export class TestDurable extends createDurableServer({
 	locals: {},
+
+	rateLimiters: {
+		MY_RATE_LIMITER: ({ session }) => {
+			return session.id;
+		},
+	},
 }) {
-	// blockConcurrencyWhile = async () => {
-	// 	console.log('blockConcurrencyWhile');
-	// };
 	out = {
 		message: procedure('out')
 			.input(object({ message: optional(string(), 'hello') }))
@@ -78,6 +72,7 @@ export class TestDurable extends createDurableServer({
 		message: procedure('in')
 			.input(object({ message: string() }))
 			.handle(({ input, event }) => {
+				console.log('event');
 				return {
 					hello: input.message,
 				};
@@ -96,17 +91,18 @@ export class TestDurable extends createDurableServer({
 		test: procedure('durable').handle(async ({ event }) => {
 			return {
 				hello: 'world',
+				headers: Object.fromEntries(event.request.headers.entries()),
 			};
 		}),
 		update: procedure('durable').handle(async ({ event }) => {
-			const doc = this.doc;
-
-			doc.getText('text').insert(0, 'hello world');
+			// doc.getText('text').insert(0, 'hello world');
 			return {
 				ok: true,
 			};
 		}),
 	};
+
+	send = this.createSender(this.out);
 }
 
 const Queue = {
@@ -122,7 +118,7 @@ const server = createServer({
 		TestDurable: TestDurable,
 	},
 	router,
-	locals: (request, env) => {
+	locals: () => {
 		return {
 			prod: true,
 			groq: {} as Groq,
@@ -137,8 +133,8 @@ const server = createServer({
 		}
 	},
 	rateLimiters: {
-		MY_RATE_LIMITER: (event) => {
-			return event.request.headers.get('cf-connecting-ip') || '';
+		MY_RATE_LIMITER: ({ request }) => {
+			return request.headers.get('cf-connecting-ip') || '';
 		},
 	},
 	queues: {
@@ -185,9 +181,9 @@ const server_ = createServer({
 	objects: {
 		TestDurable: TestDurable,
 	},
-	exclude: {
-		test: true,
-	},
+	// exclude: {
+	// 	test: true,
+	// },
 });
 
 const servers = createServers({
@@ -213,13 +209,13 @@ const servers = createServers({
 				console.log(event);
 			},
 		},
-		exclude: {},
-		locals: () => {
+		locals: ({}) => {
 			return {
 				prod: true,
 				groq: {} as Groq,
 			};
 		},
+		cors: undefined,
 	},
 	admin: {
 		router: adminRouter,

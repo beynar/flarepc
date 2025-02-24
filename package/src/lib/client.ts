@@ -1,7 +1,7 @@
 import { type Client, type MaybePromise, type Server } from './types';
 import { createDocumentConnection, createWebSocketConnection } from './websocket';
 import { tryParse } from './utils';
-import { deform, form, parse } from './transform';
+import { deform, form, parse, stringify } from './transform';
 
 export type ClientMeta = {
 	name: string | null;
@@ -97,7 +97,7 @@ export const createClient = <
 >({
 	endpoint,
 	throwOnError = false,
-	headers,
+	headers: customHeaders,
 	fetch: f = fetch,
 	onError,
 	onResponse,
@@ -111,9 +111,21 @@ export const createClient = <
 			path.unshift(`[${server}]`);
 		}
 
+		const headers = Object.assign(
+			{
+				'x-flarepc-client': jsonMode ? 'json' : 'form',
+			},
+			typeof customHeaders === 'function'
+				? await customHeaders({
+						path: path.join('/'),
+						input: payload,
+					})
+				: customHeaders,
+		) satisfies HeadersInit;
+
 		url.pathname = path.join('/');
 		if (object.websocket) {
-			return createWebSocketConnection(url, payload);
+			return createWebSocketConnection(url, payload, headers);
 		}
 
 		if (object.doc) {
@@ -130,6 +142,7 @@ export const createClient = <
 		if (method === 'GET') {
 			url.search = new URLSearchParams(JSON.stringify(payload)).toString();
 		}
+
 		return f(url, {
 			method,
 			body: method === 'GET' ? undefined : form(payload),
@@ -140,17 +153,7 @@ export const createClient = <
 					}
 				: {}),
 
-			headers: Object.assign(
-				{
-					'x-flarepc-client': jsonMode ? 'json' : 'form',
-				},
-				typeof headers === 'function'
-					? await headers({
-							path: path.join('/'),
-							input: payload,
-						})
-					: headers,
-			),
+			headers,
 		}).then(async (res) => {
 			onResponse?.(res as any);
 			if (res.status !== 200) {

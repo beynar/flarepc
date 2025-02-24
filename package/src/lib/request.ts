@@ -23,7 +23,7 @@ export const handleRequest = async (event: DurableRequestEvent | RequestEvent, r
 		method === 'GET'
 			? JSON.parse(decodeURIComponent(new URLSearchParams(url.search).get('input') || '{}'))
 			: isClientRequest
-				? deform(await request.formData())
+				? deform((await request.formData()) as FormData)
 				: await request.json();
 
 	if (handler && 'call' in handler) {

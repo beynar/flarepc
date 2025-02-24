@@ -1,20 +1,16 @@
-import { error, Schema } from '.';
+import { error } from '.';
+import { StandardSchemaV1 } from './standardSchema';
 
-export const validate = <S extends Schema | undefined>(schema: S, data: any) => {
+export const validate = async <S extends StandardSchemaV1 | undefined>(schema: S, input: any) => {
 	if (schema === undefined) {
 		return undefined;
 	} else {
-		// @ts-ignore
-		const parseResult = schema.safeParse?.(data) || schema._run?.({ value: data }, { abortEarly: true, abortPipeEarly: true });
-		const errors = parseResult?.error?.issues || parseResult.issues || parseResult.summary;
-		if (errors) {
-			throw error('BAD_REQUEST', errors);
+		let result = schema['~standard'].validate(input);
+		if (result instanceof Promise) result = await result;
+
+		if (result.issues) {
+			throw error('BAD_REQUEST', JSON.stringify(result.issues, null, 2));
 		}
-		if ('_run' in schema) {
-			return parseResult.value;
-		} else if ('safeParse' in schema) {
-			return parseResult.data;
-		}
-		return parseResult.data || parseResult.output || parseResult;
+		return result.value;
 	}
 };

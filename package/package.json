@@ -48,26 +48,24 @@
 	],
 	"devDependencies": {
 		"@cloudflare/vitest-pool-workers": "^0.4.31",
-		"@cloudflare/workers-types": "^4.20241216.0",
-		"@types/bun": "^1.1.14",
+		"@cloudflare/workers-types": "^4.20250214.0",
+		"@types/bun": "^1.2.2",
 		"@types/cookie": "^0.6.0",
-		"@vitest/ui": "^1.6.0",
-		"tsup": "^8.3.5",
-		"type-fest": "^4.30.1",
-		"typescript": "^5.7.2",
+		"@vitest/ui": "^1.6.1",
+		"tsup": "^8.3.6",
+		"type-fest": "^4.35.0",
+		"typescript": "^5.7.3",
 		"vitest": "1.5.0",
-		"wrangler": "^3.95.0"
+		"wrangler": "^3.109.2"
 	},
 	"dependencies": {
-		"arktype": "2.0.0-beta.2",
 		"cookie": "^0.6.0",
+		"cron-parser": "^5.0.4",
 		"devalue": "^5.1.1",
 		"lib0": "^0.2.99",
-		"mrmime": "^2.0.0",
-		"valibot": "^0.38.0",
+		"mrmime": "^2.0.1",
 		"y-protocols": "^1.0.6",
-		"yjs": "^13.6.20",
-		"zod": "^3.24.1"
+		"yjs": "^13.6.23"
 	},
 	"typesVersions": {
 		"*": {

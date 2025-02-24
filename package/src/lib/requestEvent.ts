@@ -10,7 +10,8 @@ import {
 	ServerOptions,
 	GetObjectJurisdictionOrLocationHint,
 } from '.';
-import type { Request } from '@cloudflare/workers-types';
+
+import type { Request as CfRequest } from '@cloudflare/workers-types';
 
 const getMetaFromRequest = async ({
 	event,
@@ -52,27 +53,48 @@ export const getJurisdictionalNamespace = (
 };
 
 export const buildEvent = async (
-	request: Request,
+	request: CfRequest,
 	env: Env,
 	ctx: ExecutionContext,
 	opts: ServerOptions,
 	server: string | null = null,
+	isWebSocketConnect: boolean = false,
 ): Promise<RequestEvent> => {
+	const url = new URL(decodeURI(request.url));
+	const clonedHeaders = new Headers(request.headers);
+
+	if (isWebSocketConnect) {
+		// Websockets lacks the headers object, so we need to parse the headers from the search params and append them to the headers object
+		const searchParamsHeaders = JSON.parse(url.searchParams.get('headers') || '{}');
+		Object.entries(searchParamsHeaders).forEach(([key, value]) => {
+			clonedHeaders.append(key, value as string);
+		});
+		url.searchParams.delete('headers');
+	}
+
+	// no need to clone the request for normal requests
+	const clonedRequest = isWebSocketConnect
+		? (new Request(request as any, {
+				headers: clonedHeaders,
+			}) as any)
+		: request;
+
 	const event = {
 		ctx,
 		env,
 		path: [],
 		locals: {},
 		queue: new QueueHandler(env, ctx, opts.queues).send,
-		request,
+		request: clonedRequest,
 		static: new StaticHandler(env, ctx),
 		meta: { name: null, id: null, jurisdiction: null, locationHint: null, server },
-		url: new URL(decodeURI(request.url)),
-		cookies: new Cookies(request),
+		url,
+		cookies: new Cookies(request as any),
 	} satisfies RequestEvent;
 
 	getPath(event);
 	await getMetaFromRequest({ event, getObjectJurisdictionOrLocationHint: opts.getObjectJurisdictionOrLocationHint });
+
 	event.locals = typeof opts.locals === 'function' ? await opts.locals(event) : opts.locals;
 	return event;
 };
@@ -103,7 +125,7 @@ export const getPath = (event: RequestEvent | DurableRequestEvent) => {
 };
 
 export type RequestEvent = {
-	request: Request;
+	request: CfRequest;
 	env: Env;
 	ctx: ExecutionContext;
 	locals: Locals;
@@ -117,14 +139,13 @@ export type RequestEvent = {
 export type CronRequestEvent = ScheduledController & {
 	env: Env;
 	ctx: ExecutionContext;
-	locals?: Locals;
 	queue: QueueHandler['send'];
 };
 
 export type DurableRequestEvent = {
-	request: Request;
-	ctx: DurableObjectState;
+	request: CfRequest;
 	env: Env;
+	ctx: DurableObjectState;
 	locals: Locals;
 	path: string[];
 	meta: Meta;
@@ -144,10 +165,8 @@ export type WebsocketOutputRequestEvent = {
 };
 
 export type WebsocketInputRequestEvent = {
-	from: {
-		session: Session;
-		ws: WebSocket;
-	};
+	ws: WebSocket;
+	session: Session;
 	locals: Locals;
 	env: Env;
 	ctx: DurableObjectState;
@@ -161,5 +180,4 @@ export type QueueRequestEvent = {
 	message: Message<unknown>;
 	ctx: ExecutionContext;
 	env: Env;
-	locals: Locals;
 };

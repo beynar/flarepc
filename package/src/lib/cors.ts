@@ -43,10 +43,15 @@ export const cors = (options: CorsOptions = {}) => {
 	};
 
 	const appendHeadersAndReturn = (response: Response, headers: Record<string, any>): Response => {
+		const newHeaders = new Headers(response.headers);
 		for (const [key, value] of Object.entries(headers)) {
-			if (value) response.headers.append(key, value);
+			if (value) newHeaders.set(key, value);
 		}
-		return response;
+		return new Response(response.body, {
+			status: response.status,
+			statusText: response.statusText,
+			headers: newHeaders,
+		});
 	};
 
 	const preflight = ({ request }: RequestEvent) => {

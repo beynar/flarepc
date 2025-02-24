@@ -14,6 +14,9 @@ export const publicApi = createClient<Servers, 'public'>({
 	jsonMode: true,
 	onError: (error) => {
 		console.log(error);
+	},
+	headers: {
+		test: 'true'
 	}
 });
 

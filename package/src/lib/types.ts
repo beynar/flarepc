@@ -1,7 +1,4 @@
 import type { Queue } from '@cloudflare/workers-types';
-import type { InferInput as VInput, InferOutput as VOutput, BaseSchema as VSchema } from 'valibot';
-import type { Schema as ZSchema, infer as ZOutput, input as ZInput } from 'zod';
-import type { Type as ASchema } from 'arktype';
 import {
 	Handler,
 	ConnectOptions,
@@ -19,7 +16,8 @@ import {
 } from '.';
 
 import type { DurableDoc } from './yjs';
-import type { DocProvider } from './yjs/client';
+
+import { StandardSchemaV1 } from './standardSchema';
 export interface Register {}
 
 export type Env = Register extends {
@@ -70,22 +68,6 @@ export type Queues = Register extends {
 
 export type ProcedureType = 'queue' | 'durable' | 'in' | 'out' | undefined;
 
-export type Schema = ZSchema | VSchema<any, any, any> | ASchema;
-export type SchemaInput<S extends Schema> = S extends ASchema
-	? S['inferIn']
-	: S extends ZSchema
-		? ZInput<S>
-		: S extends VSchema<infer I, infer O, infer E>
-			? VInput<S>
-			: never;
-export type SchemaOutput<S extends Schema> = S extends ASchema
-	? S['infer']
-	: S extends ZSchema
-		? ZOutput<S>
-		: S extends VSchema<infer I, infer O, infer E>
-			? VOutput<S>
-			: never;
-
 export type MaybePromise<T> = T | Promise<T>;
 
 export type SendOptions = {
@@ -95,9 +77,12 @@ export type SendOptions = {
 
 export type Middleware<T extends ProcedureType = undefined, R = any> = (event: DynamicRequestEvent<T>) => MaybePromise<R>;
 
-type RateLimitKeyExtractor<T extends RequestEvent | WebsocketInputRequestEvent | DurableRequestEvent> = (event: T) => string | void;
+type RateLimitKeyExtractor<T extends ProcedureLimiterEvent | WebsocketLimiterEvent> = (event: T) => string | void;
 
-export type ProcedureRateLimiters = Record<PickKeyType<Env, RateLimit>, RateLimitKeyExtractor<RequestEvent | DurableRequestEvent>>;
+type ProcedureLimiterEvent = AllUnionFields<RequestEvent | DurableRequestEvent>;
+type WebsocketLimiterEvent = WebsocketInputRequestEvent & { type: string; data: unknown };
+
+export type ProcedureRateLimiters = Record<PickKeyType<Env, RateLimit>, RateLimitKeyExtractor<ProcedureLimiterEvent>>;
 
 export type WebsocketRateLimiters = Record<
 	PickKeyType<Env, RateLimit>,
@@ -110,7 +95,6 @@ export type Session = {
 	connected: boolean;
 	createdAt: number;
 	data: SessionData;
-	meta: DurableMeta;
 };
 
 export type MessagePayload<O extends Router, T extends RouterPaths<O>> = {
@@ -166,9 +150,11 @@ export type DurableOptions = {
 	blockConcurrencyWhile?: (object: DurableServer) => MaybePromise<void>;
 	queues?: Queues;
 };
-export type HandleFunction<S extends Schema | undefined, M extends Middleware<T>[] | undefined, T extends ProcedureType = undefined> = (
-	payload: HandlePayload<S, M, T>,
-) => MaybePromise<any>;
+export type HandleFunction<
+	S extends StandardSchemaV1 | undefined,
+	M extends Middleware<T>[] | undefined,
+	T extends ProcedureType = undefined,
+> = (payload: HandlePayload<S, M, T>) => MaybePromise<any>;
 
 type OmitNever<T> = Pick<
 	T,
@@ -188,12 +174,12 @@ export type DynamicRequestEvent<T extends ProcedureType = undefined> = T extends
 				: RequestEvent;
 
 export type HandlePayload<
-	S extends Schema | undefined,
+	S extends StandardSchemaV1 | undefined,
 	M extends Middleware<T>[] | undefined,
 	T extends ProcedureType = undefined,
 > = OmitNever<{
 	event: DynamicRequestEvent<T>;
-	input: S extends Schema ? SchemaInput<S> : never;
+	input: S extends StandardSchemaV1 ? StandardSchemaV1.InferInput<S> : never;
 	ctx: ReturnOfMiddlewares<M, T>;
 }>;
 
@@ -260,7 +246,16 @@ export type InferApiTypes<S extends Server> = IO<S['router']> & {
 
 export type InferDurableApi<D extends DurableServer | DurableDoc> = DurableServerDefinition<D['router'], D['in'], D['out'], D['_TYPE']>;
 
-export type DocProviderConstructor<O extends Router> = new (ws: WebSocketClient, opts?: DocOptions<O>) => DocProvider;
+export interface DocProvider {
+	doc: any;
+	awareness: any;
+	synced: boolean;
+	on(event: string, callback: () => void): void;
+}
+
+export type DocProviderConstructor<O extends Router> = {
+	new (ws: WebSocketClient<any, O>, opts?: DocOptions<O>): DocProvider;
+};
 
 export type Client<S extends Server> = API<S['router']> & {
 	[K in keyof S['objects']]: (id?: 'random' | (string & {})) => S['objects'][K] extends DurableServerDefinition<
@@ -298,8 +293,8 @@ export type StreamCallback<S = any> = ({ chunk, first }: { chunk: S; first: bool
 
 export type WSAPI<R extends Router> = {
 	[K in keyof R]: R[K] extends Handler<infer M, infer S, infer H, infer T>
-		? S extends Schema
-			? (payload: SchemaInput<S>) => Promise<ApiResult<ReturnType<H>>>
+		? S extends StandardSchemaV1
+			? (payload: StandardSchemaV1.InferInput<S>) => Promise<ApiResult<ReturnType<H>>>
 			: () => Promise<ApiResult<ReturnType<H>>>
 		: R[K] extends Router
 			? WSAPI<R[K]>
@@ -308,10 +303,10 @@ export type WSAPI<R extends Router> = {
 
 export type API<R extends Router = Router> = {
 	[K in keyof R]: R[K] extends Handler<infer M, infer S, infer H, infer T>
-		? S extends Schema
+		? S extends StandardSchemaV1
 			? ReturnType<H> extends Promise<ReadableStream<infer C>>
-				? (payload: SchemaInput<S>, callback: StreamCallback<C>) => void
-				: (payload: SchemaInput<S>) => Promise<ApiResult<ReturnType<H>>>
+				? (payload: StandardSchemaV1.InferInput<S>, callback: StreamCallback<C>) => void
+				: (payload: StandardSchemaV1.InferInput<S>) => Promise<ApiResult<ReturnType<H>>>
 			: ReturnType<H> extends Promise<ReadableStream<infer C>>
 				? (callback: StreamCallback<C>) => void
 				: () => Promise<ApiResult<ReturnType<H>>>
@@ -339,9 +334,9 @@ export type Get<T, K extends string> = K extends `${infer P}.${infer Rest}`
 		: 'never';
 
 export type InferInputAtPath<R extends Router, P extends RouterPaths<R>> =
-	Get<R, P> extends Handler<any, infer S, any, any> ? (S extends Schema ? SchemaInput<S> : never) : never;
+	Get<R, P> extends Handler<any, infer S, any, any> ? (S extends StandardSchemaV1 ? StandardSchemaV1.InferInput<S> : never) : never;
 export type InferSchemaOutPutAtPath<R extends Router, P extends RouterPaths<R>> =
-	Get<R, P> extends Handler<any, infer S, any, any> ? (S extends Schema ? SchemaOutput<S> : never) : never;
+	Get<R, P> extends Handler<any, infer S, any, any> ? (S extends StandardSchemaV1 ? StandardSchemaV1.InferOutput<S> : never) : never;
 
 export type InferOutPutAtPath<R extends Router, P extends RouterPaths<R>> =
 	Get<R, P> extends Handler<infer M, infer S, infer H, infer T>
@@ -363,10 +358,13 @@ export type Meta = {
 	server: string | null;
 };
 export type DurableMeta = Meta & Required<Pick<Meta, 'name' | 'id'>>;
-
-export type PickKeyType<Source extends unknown, TargetType> = {
-	[K in keyof Source]: Source[K] extends TargetType ? K : never;
-}[keyof Source];
+type String<T extends string | {}> = T extends string ? T : never;
+export type PickKeyType<Source extends unknown, TargetType> = String<
+	| {
+			[K in keyof Source]: Source[K] extends TargetType ? K : never;
+	  }[keyof Source]
+	| (string | {})
+>;
 
 export type QueuesRouter = {
 	[K in PickKeyType<Env, Queue>]: Router;
@@ -374,10 +372,10 @@ export type QueuesRouter = {
 
 export type QueueApi<R extends Router> = {
 	[K in keyof R]: R[K] extends Handler<infer M, infer S, infer H, infer T>
-		? S extends Schema
+		? S extends StandardSchemaV1
 			? {
-					sendBatch: (payload: SchemaInput<S>[], delay?: number) => Promise<void>;
-					send: (payload: SchemaInput<S>, delay?: number) => Promise<void>;
+					sendBatch: (payload: StandardSchemaV1.InferInput<S>[], delay?: number) => Promise<void>;
+					send: (payload: StandardSchemaV1.InferInput<S>, delay?: number) => Promise<void>;
 				}
 			: () => void
 		: R[K] extends Router
@@ -398,10 +396,12 @@ export type DurableObjects = Record<
 	}
 >;
 
+import { AllUnionFields, LiteralUnion } from 'type-fest';
+
+type EventsUnion = Omit<AllUnionFields<RequestEvent | QueueRequestEvent | CronRequestEvent | DurableRequestEvent>, 'locals'>;
+
 export type CronHandler = (event: CronRequestEvent) => void;
-export type LocalsOptions =
-	| Locals
-	| ((event: Omit<RequestEvent | QueueRequestEvent | CronRequestEvent | DurableRequestEvent, 'locals'>) => MaybePromise<Locals>);
+export type LocalsOptions = Locals | ((event: EventsUnion) => MaybePromise<Locals>);
 export type ServerOptions<R extends Router = Router, O extends DurableObjects = DurableObjects> = {
 	router: R;
 	locals?: LocalsOptions;

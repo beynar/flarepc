@@ -93,9 +93,9 @@ const executeFetch = async <O extends ServerOptions>(
 	opts: O,
 	server: string | null = null,
 ): Promise<Response> => {
-	const event = await buildEvent(request, env, ctx, opts, server);
-	const stub = await getDurableServer({ event, objects: opts.objects });
 	const isWebSocketConnect = request.headers.get('Upgrade') === 'websocket';
+	const event = await buildEvent(request as any, env, ctx, opts, server, isWebSocketConnect);
+	const stub = await getDurableServer({ event, objects: opts.objects });
 
 	// Cors are enabled by default with very permissive options to smoothen local development the usage and allows cookies to be used.
 	const corsOptions = typeof opts.cors === 'function' ? await opts.cors(event) : opts.cors;
@@ -123,12 +123,16 @@ const executeFetch = async <O extends ServerOptions>(
 		}
 
 		if (stub && event.meta?.name && event.meta?.id) {
-			await stub.setMeta(event.meta);
+			// @ts-ignore
+			response = await stub.fetch(event.request, {
+				cf: {
+					...request.cf,
+					meta: event.meta,
+					isWebSocketConnect,
+				},
+			});
 			if (isWebSocketConnect) {
-				return await stub.fetch(request.url);
-			} else {
-				// @ts-ignore
-				response = await stub.handleRpc(request);
+				return response;
 			}
 		} else {
 			response = await handleRequest(event, opts.router);
@@ -157,11 +161,10 @@ const executeQueue = (batch: MessageBatch, env: Env, ctx: ExecutionContext, rout
 					batch,
 					ctx,
 					env,
-					locals: {},
+
 					message,
 					path,
 				} satisfies QueueRequestEvent;
-				event.locals = typeof locals === 'function' ? await locals(event) : locals;
 				try {
 					await handler.call(event, validate(handler?.schema, payload));
 					message.ack();
@@ -181,10 +184,8 @@ const executeCron = async (controller: ScheduledController, env: Env, ctx: Execu
 	const event = Object.assign(controller, {
 		ctx,
 		env,
-		locals: {},
 		queue: new QueueHandler(env, ctx).send,
 	}) satisfies CronRequestEvent;
-	event.locals = typeof opts.locals === 'function' ? await opts.locals(event) : opts.locals;
 	return handler(event);
 };
 
@@ -321,78 +322,3 @@ export const combineQueues = (opts: ServersOptions) => {
 	}
 	return hasQueues ? QUEUES : undefined;
 };
-
-const tast = [
-	{
-		image: {
-			attributes: {
-				itemID: 'gid://shopify/Metafield/22890933125361',
-				itemType: 'file_reference',
-				itemProp: 'home_reassurance@fr:meta-cms-y9qye2mtYK',
-			},
-			value: {
-				alt: 'image',
-				height: 512,
-				width: 512,
-				src: 'https://cdn.shopify.com/s/files/1/0355/0769/9852/files/kisspng-flag-of-france-emoji-flag-of-italy-mexico-flag-emoji-5b45acd45f90e5.2998003715312928843915_4000x.png?v=1673542231',
-				id: 'gid://shopify/MediaImage/30991431532785',
-			},
-		},
-		label: {
-			attributes: {
-				itemID: 'gid://shopify/Metafield/22890933092593',
-				itemType: 'multi_line_text_field',
-				itemProp: 'home_reassurance@fr:meta-cms-5yqFC8I1Ma',
-			},
-			value: '<p>Concept 100% Français</p>',
-		},
-	},
-	{
-		image: {
-			attributes: {
-				itemID: 'gid://shopify/Metafield/22890933190897',
-				itemType: 'file_reference',
-				itemProp: 'home_reassurance@fr:meta-cms-kV-2PGBzpP',
-			},
-			value: {
-				alt: 'image',
-				height: 100,
-				width: 100,
-				src: 'https://cdn.shopify.com/s/files/1/0355/0769/9852/files/camion-de-livraison.png?v=1669917660',
-				id: 'gid://shopify/MediaImage/44078630994261',
-			},
-		},
-		label: {
-			attributes: {
-				itemID: 'gid://shopify/Metafield/22890933158129',
-				itemType: 'multi_line_text_field',
-				itemProp: 'home_reassurance@fr:meta-cms-p5HvXqKUN5',
-			},
-			value: '<p>Livraison garantie avant Noël</p>',
-		},
-	},
-	{
-		image: {
-			attributes: {
-				itemID: 'gid://shopify/Metafield/22890933256433',
-				itemType: 'file_reference',
-				itemProp: 'home_reassurance@fr:meta-cms-qDLHFXFqrm',
-			},
-			value: {
-				alt: 'image',
-				height: 100,
-				width: 100,
-				src: 'https://cdn.shopify.com/s/files/1/0355/0769/9852/files/Cadeau_2a528d71-2429-4af7-9bcc-cdcd0017211f_4000x.png?v=1700576112',
-				id: 'gid://shopify/MediaImage/44361818997077',
-			},
-		},
-		label: {
-			attributes: {
-				itemID: 'gid://shopify/Metafield/22890933223665',
-				itemType: 'multi_line_text_field',
-				itemProp: 'home_reassurance@fr:meta-cms-ZwWqCh4My4',
-			},
-			value: '<p>La cadeau parfait pour un(e) fan de sport</p>',
-		},
-	},
-];

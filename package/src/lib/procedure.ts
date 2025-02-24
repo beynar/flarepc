@@ -1,4 +1,5 @@
-import { HandleFunction, Middleware, ReturnOfMiddlewares, Schema, SchemaInput, ProcedureType, DynamicRequestEvent, HandlePayload } from '.';
+import { HandleFunction, Middleware, ReturnOfMiddlewares, ProcedureType, DynamicRequestEvent, HandlePayload } from '.';
+import { StandardSchemaV1 } from './standardSchema';
 
 export const useMiddlewares = async <M extends Middleware<T>[], T extends ProcedureType = undefined>(
 	middlewares: M,
@@ -29,7 +30,7 @@ export class Procedure<M extends Middleware<T>[], T extends ProcedureType = unde
 	handle = <H extends HandleFunction<undefined, M, T>>(handleFunction: H) => {
 		return new Handler(this.middlewares, undefined, handleFunction) as Handler<M, undefined, H, T>;
 	};
-	input = <S extends Schema>(schema: S) => {
+	input = <S extends StandardSchemaV1>(schema: S) => {
 		return {
 			handle: <H extends HandleFunction<S, M, T>>(handleFunction: H) => {
 				return new Handler(this.middlewares, schema, handleFunction) as Handler<M, S, H, T>;
@@ -40,7 +41,7 @@ export class Procedure<M extends Middleware<T>[], T extends ProcedureType = unde
 
 export class Handler<
 	M extends Middleware<T>[],
-	S extends Schema | undefined,
+	S extends StandardSchemaV1 | undefined,
 	const H extends HandleFunction<S, M, T>,
 	T extends ProcedureType = undefined,
 > {
@@ -54,7 +55,7 @@ export class Handler<
 		this.handleFunction = handleFunction;
 	}
 
-	call = async (event: DynamicRequestEvent<T>, input: S extends Schema ? SchemaInput<S> : undefined) => {
+	call = async (event: DynamicRequestEvent<T>, input: S extends StandardSchemaV1 ? StandardSchemaV1.InferInput<S> : undefined) => {
 		return this.handleFunction({ event, input, ctx: await useMiddlewares(this.middlewares, event) } as HandlePayload<S, M, T>);
 	};
 }

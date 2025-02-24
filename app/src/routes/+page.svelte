@@ -6,18 +6,47 @@
 
 	onMount(async () => {
 		const wes = await publicApi.TestDurable('test').connect({
-			// handlers: {
-			// 	message: ({ data, ctx }) => {
-			// 		console.log(data);
-			// 	}
-			// }
+			headers: {
+				'client-id': 'client-id'
+			},
+			handlers: {
+				message: ({ data, ctx }) => {
+					console.log(data);
+				},
+				arn: {
+					aud: ({ data, ctx }) => {
+						console.log(data);
+					}
+				}
+			}
 		});
-		console.log(wes);
-		wes.on('presence', () => {
+		wes.on('presence', (presence) => {
 			console.log('presence');
 		});
 		ws = wes;
 	});
+
+	class Test {
+		test: {
+			test: string;
+		};
+
+		constructor() {
+			this.test = {
+				test: 'test'
+			};
+		}
+	}
+
+	const test = async () => {
+		const [result, error] = await publicApi.TestDurable('test').test();
+
+		if (error) {
+			console.log({ error });
+		} else {
+			console.log({ result });
+		}
+	};
 </script>
 
 <img src="http://localhost:8080/[public]/static/test.png" alt="test" />
@@ -41,12 +70,13 @@
 		class="shadow-md rounded-lg h-fit bg-white p-4"
 		onclick={async () => {
 			// const result = await api.text('ezaez');
-			const [result2, error] = await publicApi.caca.prout.vomi();
-			if (result2) {
-				console.log(result2);
-			} else {
-				console.log({ error });
-			}
+			const [res] = await publicApi.caca.prout.vomi();
+			console.log(res);
+			// if (result2) {
+			// 	console.log(result2);
+			// } else {
+			// 	console.log({ error });
+			// }
 		}}
 	>
 		Test excluded procedure
@@ -63,7 +93,7 @@
 	<button
 		class="shadow-md rounded-lg h-fit bg-white p-4"
 		onclick={async () => {
-			const result = await api.TestDurable('test');
+			const result = await publicApi.TestDurable('test').test();
 			console.log(result);
 		}}
 	>
@@ -92,7 +122,6 @@
 				platform: 'android',
 				versions: ['1', '2', '3']
 			});
-			console.log(result);
 		}}
 	>
 		Error on valibot
@@ -124,7 +153,6 @@
 			const result = await api.TestDurable('test').test.test.test({
 				id: ws?.presence[0].id!
 			});
-			console.log(result);
 		}}
 	>
 		Test a normal procedure on the object
@@ -134,10 +162,19 @@
 			class="shadow-md rounded-lg h-fit bg-white p-4"
 			onclick={async () => {
 				const date = Date.now();
-				ws?.send.message({ message: date.toString() });
+				console.log('send message', ws);
+				const [result, error] = await ws!.send.message({
+					message: date.toString()
+				});
+				console.log({ result, error });
+				if (error) {
+					console.log({ error });
+				} else {
+					console.log({ result });
+				}
 			}}
 		>
-			send message
+			send message eaz
 		</button>
 	{/if}
 </div>
