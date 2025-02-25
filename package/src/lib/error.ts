@@ -32,6 +32,30 @@ export class FLARERROR extends Error {
 	}
 }
 
+class HttpError {
+	status: number;
+	body: { message: string };
+	constructor(status: number, body: string | { message: string }) {
+		this.status = status;
+		if (typeof body === 'string') {
+			this.body = { message: body };
+		} else if (body) {
+			this.body = body;
+		} else {
+			this.body = { message: `Error: ${status}` };
+		}
+	}
+
+	toString() {
+		return JSON.stringify(this.body);
+	}
+}
+
+function isHttpError(e: unknown, status?: number): e is HttpError {
+	if (!(e instanceof HttpError)) return false;
+	return !status || e.status === status;
+}
+
 export const error = (code: ERROR, message?: string) => {
 	throw new FLARERROR(code, message);
 };
@@ -46,19 +70,26 @@ export const getErrorAsJson = (
 	if (error instanceof FLARERROR) {
 		return {
 			body: JSON.stringify({
-				error: error.message,
+				message: tryParse(error.message),
 			}),
 			status: httpErrorMap[error.code].code,
 			statusText: httpErrorMap[error.code].message,
 		};
-	} else {
+	} else if (isHttpError(error)) {
 		return {
+			body: error.body.message,
+			status: error.status,
+			statusText: error.body.message,
+		};
+	} else {
+		const errorResponse = {
 			body: JSON.stringify(error, Object.getOwnPropertyNames(error)),
 			// @ts-ignore
-			status: error.code || 500,
+			status: 500,
 			// @ts-ignore
-			statusText: tryParse(error.message) || 'Internal Server Error',
+			statusText: 'Internal Server Error',
 		};
+		return errorResponse;
 	}
 };
 

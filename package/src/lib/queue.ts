@@ -36,7 +36,7 @@ export class QueueHandler {
 	}
 
 	send = <Q extends PickKeyType<Env, Queue>>(queueName: Q) => {
-		return createRecursiveProxy(({ type, data, opts }) => {
+		return createRecursiveProxy(async ({ type, data, opts }) => {
 			if (!this.queues || !this.env?.[queueName as keyof Env]) {
 				throw error('SERVICE_UNAVAILABLE');
 			}
@@ -50,7 +50,7 @@ export class QueueHandler {
 					messages.push(
 						stringify({
 							type: path.join('.'),
-							payload: validate(handler?.schema, item),
+							payload: await validate(handler?.schema, item),
 						}),
 					);
 				}
@@ -71,7 +71,7 @@ export class QueueHandler {
 			} else {
 				const parsedData = stringify({
 					type: path.join('.'),
-					payload: validate(handler?.schema, data),
+					payload: await validate(handler?.schema, data),
 				});
 				return this.ctx.waitUntil(queue.send(parsedData, { contentType: 'text', delaySeconds: 1 }));
 			}

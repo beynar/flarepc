@@ -27,7 +27,7 @@ export const handleRequest = async (event: DurableRequestEvent | RequestEvent, r
 				: await request.json();
 
 	if (handler && 'call' in handler) {
-		result = await handler.call(event as any, validate(handler.schema, requestData));
+		result = await handler.call(event as any, await validate(handler.schema, requestData));
 		if (result instanceof Response) {
 			return result;
 		}

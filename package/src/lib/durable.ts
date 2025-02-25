@@ -34,7 +34,7 @@ import { rateLimit } from './ratelimit';
 import { getPath } from './requestEvent';
 import type { Request } from '@cloudflare/workers-types';
 import { DurableKV } from './durableKv';
-import { Scheduler } from './scheduler';
+import { Scheduler, SchedulerAPI } from './scheduler';
 
 const getDefaultBroadcastPresenceTag = (opts?: DurableOptions) =>
 	opts?.broadcastPresenceTo && opts?.broadcastPresenceTo !== 'ALL' && opts?.broadcastPresenceTo !== 'NONE'
@@ -90,7 +90,7 @@ export class DurableServer extends DurableObject<any> {
 	};
 
 	event = <D extends {}>(
-		rest: D,
+		rest: D = {} as D,
 	): {
 		ctx: DurableObjectState;
 		env: Env;
@@ -113,14 +113,14 @@ export class DurableServer extends DurableObject<any> {
 			request,
 			url: new URL(request.url),
 			cookies: new Cookies(request),
-			meta: this.meta,
+			meta: this.meta!,
 		}) satisfies DurableRequestEvent;
 		getPath(event);
 		return event;
 	};
 
 	get meta() {
-		return this.kv.get<DurableMeta>('meta')!;
+		return this.kv.get<DurableMeta>('meta');
 	}
 
 	constructor(
@@ -192,6 +192,41 @@ export class DurableServer extends DurableObject<any> {
 					});
 				}
 			}) as WSAPI<O>;
+
+	// @ts-ignore
+	createScheduler =
+		<O extends Router>(tasks: O) =>
+		(
+			otps: {
+				description?: string;
+			} & (
+				| {
+						time: Date;
+						type: 'scheduled';
+				  }
+				| {
+						delayInSeconds: number;
+						type: 'delayed';
+				  }
+				| {
+						cron: string;
+						type: 'cron';
+				  }
+			),
+		) =>
+			createRecursiveProxy(async ({ type, data }) => {
+				if (!tasks) {
+					throw error('SERVICE_UNAVAILABLE');
+				}
+				const handler = getHandler(tasks, type.split('.')) as Handler<any, any, any, any>;
+				const parsedData = (await validate(handler?.schema, data)) as Record<string, unknown>;
+				return this.scheduler.scheduleTask({
+					description: otps.description,
+					payload: parsedData,
+					handler: type,
+					...otps,
+				});
+			}) as SchedulerAPI<O>;
 
 	// @ts-ignore
 	async fetch(request: Request & { cf: { meta: DurableMeta; isWebSocketConnect: boolean } }): Promise<Response> {

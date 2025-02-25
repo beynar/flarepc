@@ -102,6 +102,16 @@ export class TestDurable extends createDurableServer({
 		}),
 	};
 
+	tasks = {
+		test: procedure('in')
+			.input(object({ message: string() }))
+			.handle(async ({ input }) => {
+				return {
+					hello: input.message,
+				};
+			}),
+	};
+
 	send = this.createSender(this.out);
 }
 

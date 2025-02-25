@@ -2,10 +2,10 @@ import { defineWorkersConfig } from '@cloudflare/vitest-pool-workers/config';
 
 export default defineWorkersConfig({
 	test: {
-		testTimeout: 10000,
+		include: ['**/*.test.ts'],
 		poolOptions: {
 			workers: {
-				wrangler: { configPath: './wrangler.toml' },
+				wrangler: { configPath: './test/fixtures/wrangler.toml' },
 			},
 		},
 	},

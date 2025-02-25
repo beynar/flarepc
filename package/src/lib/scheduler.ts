@@ -1,10 +1,33 @@
 import { parse, stringify } from './transform';
 import cronParser from 'cron-parser';
-import { Router } from './types';
+import { ApiResult, Router, WSAPI } from './types';
 import { DurableServer } from './durable';
+import { Handler } from './procedure';
+import { StandardSchemaV1 } from './standardSchema';
+import { getHandler } from './server';
+import { ScheduleRequestEvent } from './requestEvent';
 
 export type RawTask = {
 	id: string;
+	description?: string | undefined;
+	payload?: Record<string, unknown> | undefined;
+	handler: string;
+} & (
+	| {
+			time: Date;
+			type: 'scheduled';
+	  }
+	| {
+			delayInSeconds: number;
+			type: 'delayed';
+	  }
+	| {
+			cron: string;
+			type: 'cron';
+	  }
+);
+
+export type RawTaskPayload = {
 	description?: string | undefined;
 	payload?: Record<string, unknown> | undefined;
 	handler: string;
@@ -53,7 +76,7 @@ export type SqlTask = {
 export class Scheduler {
 	storage: DurableObjectStorage;
 	tasks: Router;
-	constructor(server: DurableServer) {
+	constructor(private server: DurableServer) {
 		this.storage = server.ctx.storage;
 		this.tasks = server.tasks;
 	}
@@ -102,8 +125,9 @@ export class Scheduler {
 		}
 	}
 
-	async scheduleTask(task: RawTask): Promise<void> {
-		const { id = crypto.randomUUID(), description = null, payload = null, handler } = task;
+	async scheduleTask(task: RawTaskPayload): Promise<void> {
+		const { description = null, payload = null, handler } = task;
+		const id = crypto.randomUUID();
 
 		if ('time' in task && task.time) {
 			const timestamp = Math.floor(task.time.getTime() / 1000);
@@ -223,8 +247,14 @@ export class Scheduler {
 		// This is where you would implement the actual task execution
 		console.log(`Executing task ${task.id}:`, task);
 		if ('handler' in task && task.handler) {
-			const { handler } = task;
-			//
+			const { handler: handlerPath } = task;
+			const handler = getHandler(this.tasks, handlerPath.split('.')) as Handler<any, any, any, any>;
+			if (!handler) {
+				console.error('missing handler', task);
+				return;
+			}
+
+			await handler?.call(this.server.event(), task.payload);
 		} else {
 			console.error('missing handler', task);
 		}
@@ -383,4 +413,14 @@ export type SqliteParams = number | string | boolean | null;
 export type SqliteQuery = {
 	sql?: string;
 	params?: SqliteParams[];
+};
+
+export type SchedulerAPI<R extends Router> = {
+	[K in keyof R]: R[K] extends Handler<infer M, infer S, infer H, infer T>
+		? S extends StandardSchemaV1
+			? (payload: StandardSchemaV1.InferInput<S>) => Promise<ApiResult<ReturnType<H>>>
+			: () => Promise<ApiResult<ReturnType<H>>>
+		: R[K] extends Router
+			? SchedulerAPI<R[K]>
+			: R[K];
 };

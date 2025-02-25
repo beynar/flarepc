@@ -142,6 +142,14 @@ export type CronRequestEvent = ScheduledController & {
 	queue: QueueHandler['send'];
 };
 
+export type ScheduleRequestEvent = {
+	ctx: DurableObjectState;
+	env: Env;
+	locals: Locals;
+	static: StaticHandler;
+	queue: QueueHandler['send'];
+};
+
 export type DurableRequestEvent = {
 	request: CfRequest;
 	env: Env;

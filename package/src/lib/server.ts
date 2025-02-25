@@ -166,7 +166,7 @@ const executeQueue = (batch: MessageBatch, env: Env, ctx: ExecutionContext, rout
 					path,
 				} satisfies QueueRequestEvent;
 				try {
-					await handler.call(event, validate(handler?.schema, payload));
+					await handler.call(event, await validate(handler?.schema, payload));
 					message.ack();
 				} catch (error) {
 					if (message.attempts < 10) {

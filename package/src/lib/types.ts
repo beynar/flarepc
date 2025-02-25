@@ -13,6 +13,7 @@ import {
 	CorsOptions,
 	StaticServerOptions,
 	DocOptions,
+	ScheduleRequestEvent,
 } from '.';
 
 import type { DurableDoc } from './yjs';
@@ -66,7 +67,7 @@ export type Queues = Register extends {
 		: Record<string, Router>
 	: Record<string, Router>;
 
-export type ProcedureType = 'queue' | 'durable' | 'in' | 'out' | undefined;
+export type ProcedureType = 'queue' | 'durable' | 'in' | 'out' | 'schedule' | undefined;
 
 export type MaybePromise<T> = T | Promise<T>;
 
@@ -171,7 +172,9 @@ export type DynamicRequestEvent<T extends ProcedureType = undefined> = T extends
 			? WebsocketInputRequestEvent
 			: T extends 'out'
 				? WebsocketOutputRequestEvent
-				: RequestEvent;
+				: T extends 'schedule'
+					? ScheduleRequestEvent
+					: RequestEvent;
 
 export type HandlePayload<
 	S extends StandardSchemaV1 | undefined,
@@ -257,6 +260,12 @@ export type DocProviderConstructor<O extends Router> = {
 	new (ws: WebSocketClient<any, O>, opts?: DocOptions<O>): DocProvider;
 };
 
+export type ErrorResponse = {
+	status?: number;
+	statusText?: string;
+	message?: any;
+} & {};
+
 export type Client<S extends Server> = API<S['router']> & {
 	[K in keyof S['objects']]: (id?: 'random' | (string & {})) => S['objects'][K] extends DurableServerDefinition<
 		infer R,
@@ -287,7 +296,7 @@ export type StreamCallbacks<C = string> = {
 	onEnd?: (chunks: C[]) => MaybePromise<void>;
 };
 
-type ApiResult<T> = Promise<[Awaited<T>, null] | [null, object]>;
+export type ApiResult<T> = Promise<[Awaited<T>, null] | [null, ErrorResponse]>;
 
 export type StreamCallback<S = any> = ({ chunk, first }: { chunk: S; first: boolean }) => void;
 

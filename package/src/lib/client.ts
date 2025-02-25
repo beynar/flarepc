@@ -1,4 +1,4 @@
-import { type Client, type MaybePromise, type Server } from './types';
+import { ErrorResponse, type Client, type MaybePromise, type Server } from './types';
 import { createDocumentConnection, createWebSocketConnection } from './websocket';
 import { tryParse } from './utils';
 import { deform, form, parse, stringify } from './transform';
@@ -84,7 +84,7 @@ export type ClientOptions = {
 	throwOnError?: boolean;
 	headers?: HeadersInit | (<I = unknown>({ path, input }: { path: string; input: I }) => MaybePromise<HeadersInit>);
 	fetch?: typeof fetch;
-	onError?: (error: unknown, response: Response) => void;
+	onError?: (error: ErrorResponse, response: Response) => void;
 	onResponse?: (response: Response) => void;
 	includeCredentials?: boolean;
 	server?: string;
