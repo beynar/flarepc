@@ -1,0 +1,46 @@
+{
+	// This file is a JSONC (JSON with Comments) equivalent of wrangler.toml
+
+	"name": "example-worker",
+	"main": "src/index.ts",
+	"compatibility_date": "2024-08-19",
+	"compatibility_flags": ["nodejs_compat_v2"],
+
+	"site": {
+		"bucket": "./public"
+	},
+
+	"vars": {
+		"GROQ_API_KEY": ""
+	},
+
+	// [[unsafe.bindings]]
+	"unsafe": {
+		"bindings": [
+			{
+				"name": "MY_RATE_LIMITER",
+				"type": "ratelimit",
+				"namespace_id": "1001",
+				"simple": { "limit": 4, "period": 10 }
+			}
+		]
+	},
+
+	// [[durable_objects.bindings]]
+	"durable_objects": {
+		"bindings": [
+			{
+				"name": "TestDurable",
+				"class_name": "TestDurable"
+			}
+		]
+	},
+
+	// [[migrations]]
+	"migrations": [
+		{
+			"tag": "v1",
+			"new_sqlite_classes": ["TestDurable"]
+		}
+	]
+}

@@ -1,5 +1,5 @@
 import { removeAwarenessStates } from 'y-protocols/awareness';
-import { Doc, applyUpdate, encodeStateAsUpdate } from 'yjs';
+import { Doc, UndoManager, applyUpdate, encodeStateAsUpdate } from 'yjs';
 import { WSSharedDoc, setupWSConnection } from './internal';
 import { DurableOptions, DurableMeta, Env, Locals, DurableServer } from '..';
 import { debounce } from './client';
@@ -62,7 +62,7 @@ async function getYDoc(this: DurableDoc): Promise<Doc> {
 		const snapshot = await this.opts.storage.getDoc(
 			Object.assign(durableDocEvent.bind(this)(), {
 				doc,
-			}),
+			})
 		);
 		if (snapshot instanceof Uint8Array) {
 			applyUpdate(doc, snapshot);
@@ -88,7 +88,7 @@ async function saveYDoc(this: DurableDoc): Promise<void> {
 			Object.assign(durableDocEvent.bind(this)(), {
 				snapshot,
 				doc: this.doc,
-			}),
+			})
 		);
 	} else {
 		const chunks = chunkUint8Array(snapshot);
@@ -108,7 +108,7 @@ function durableDocEvent(this: DurableDoc): DurableDocEvent {
 		ctx: this.ctx,
 		env: this.env,
 		locals: this.locals,
-		meta: this.meta,
+		meta: this.meta!,
 	};
 }
 
@@ -123,11 +123,9 @@ export class DurableDoc extends DurableServer {
 	declare opts: DurableDocOptions;
 	sessions = new Map<WebSocket, () => void>();
 	awarenessClients = new Set<number>();
+	// undoManager: UndoManager;
 
-	constructor(
-		public state: DurableObjectState,
-		public env: Env,
-	) {
+	constructor(public state: DurableObjectState, public env: Env) {
 		super(state, env);
 
 		void this.state.blockConcurrencyWhile(async () => {
@@ -137,11 +135,19 @@ export class DurableDoc extends DurableServer {
 				'update',
 				debounce(() => {
 					saveYDoc.bind(this)();
-				}, this.opts?.storage?.debounceMs || 1500),
+				}, this.opts?.storage?.debounceMs || 1500)
 			);
 			this.doc.awareness.on('update', handleAwarenessUpdate.bind(this));
 		});
+		// this.undoManager = new UndoManager(this.doc);
 	}
+
+	// undo = () => {
+	// 	this.undoManager.undo();
+	// };
+	// redo = () => {
+	// 	this.undoManager.redo();
+	// };
 
 	onConnectionClose = async (ws: WebSocket) => {
 		this.sessions.get(ws)?.();

@@ -1,4 +1,5 @@
 import { procedure, createServer, createDurableServer, InferApiTypes, createServers, error } from 'flarepc';
+import { createDurableDoc } from 'flarepc/yjs';
 import { string, optional, object } from 'valibot';
 import { DurableObject } from 'cloudflare:workers';
 
@@ -41,7 +42,7 @@ const router = {
 // const TestDurable = createDurableDoc({});
 
 // export { TestDurable };
-export class TestDurable extends createDurableServer({
+export class TestDurable extends createDurableDoc({
 	locals: {},
 
 	rateLimiters: {
@@ -95,7 +96,20 @@ export class TestDurable extends createDurableServer({
 			};
 		}),
 		update: procedure('durable').handle(async ({ event }) => {
-			// doc.getText('text').insert(0, 'hello world');
+			const doc = this.doc;
+			doc.getText('text').insert(0, 'hello world');
+			return {
+				ok: true,
+			};
+		}),
+		undo: procedure('durable').handle(async ({ event }) => {
+			this.undo();
+			return {
+				ok: true,
+			};
+		}),
+		redo: procedure('durable').handle(async ({ event }) => {
+			this.redo();
 			return {
 				ok: true,
 			};

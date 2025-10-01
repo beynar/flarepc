@@ -3,7 +3,7 @@ import { StandardSchemaV1 } from './standardSchema';
 
 export const useMiddlewares = async <M extends Middleware<T>[], T extends ProcedureType = undefined>(
 	middlewares: M,
-	event: DynamicRequestEvent<T>,
+	event: DynamicRequestEvent<T>
 ): Promise<ReturnOfMiddlewares<M, T>> => {
 	const data = {};
 	if (middlewares) {
@@ -39,11 +39,29 @@ export class Procedure<M extends Middleware<T>[], T extends ProcedureType = unde
 	};
 }
 
+const procedureTest = new Procedure([], 'durable')
+	.use((event) => {
+		return {
+			hello: 'world',
+		};
+	})
+	.use((event) => {
+		return {
+			world: 'hello',
+		};
+	});
+
+type InferMiddlewares<P extends Procedure<any, any>> = P extends Procedure<infer M, any> ? M : never;
+
+type Middlewares = InferMiddlewares<typeof procedureTest>;
+
+type RM = ReturnOfMiddlewares<InferMiddlewares<typeof procedureTest>, 'durable'>;
+
 export class Handler<
 	M extends Middleware<T>[],
 	S extends StandardSchemaV1 | undefined,
 	const H extends HandleFunction<S, M, T>,
-	T extends ProcedureType = undefined,
+	T extends ProcedureType = undefined
 > {
 	middlewares: M;
 	schema: S;

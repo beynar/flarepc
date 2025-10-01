@@ -66,8 +66,8 @@ export class DocProvider extends ObservableV2<Events> {
 	private debounceMs: number = 0;
 
 	constructor(
-		ws: WebSocketClient,
-		{ resyncInterval = -1, disableBroadcast = false, awareness, doc, debounceMs = 0 }: DocProviderOptions = {},
+		ws: WebSocketClient<any, any>,
+		{ resyncInterval = -1, disableBroadcast = false, awareness, doc, debounceMs = 0 }: DocProviderOptions = {}
 	) {
 		super();
 		this.debounceMs = debounceMs;
@@ -144,7 +144,7 @@ export class DocProvider extends ObservableV2<Events> {
 			decoder: decoding.Decoder,
 			provider: DocProvider,
 			_emitSynced: boolean,
-			_messageType: number,
+			_messageType: number
 		) => {
 			encoding.writeVarUint(encoder, messageSync);
 			const syncMessageType = syncProtocol.readSyncMessage(decoder, encoder, provider.doc, provider);
@@ -159,12 +159,12 @@ export class DocProvider extends ObservableV2<Events> {
 			_decoder: decoding.Decoder,
 			provider: DocProvider,
 			_emitSynced: boolean,
-			_messageType: number,
+			_messageType: number
 		) => {
 			encoding.writeVarUint(encoder, messageAwareness);
 			encoding.writeVarUint8Array(
 				encoder,
-				awarenessProtocol.encodeAwarenessUpdate(provider.awareness, Array.from(provider.awareness.getStates().keys())),
+				awarenessProtocol.encodeAwarenessUpdate(provider.awareness, Array.from(provider.awareness.getStates().keys()))
 			);
 		},
 
@@ -173,7 +173,7 @@ export class DocProvider extends ObservableV2<Events> {
 			decoder: decoding.Decoder,
 			provider: DocProvider,
 			_emitSynced: boolean,
-			_messageType: number,
+			_messageType: number
 		) => {
 			awarenessProtocol.applyAwarenessUpdate(provider.awareness, decoding.readVarUint8Array(decoder), provider);
 		},
@@ -251,7 +251,7 @@ export class DocProvider extends ObservableV2<Events> {
 		awarenessProtocol.removeAwarenessStates(
 			this.awareness,
 			Array.from(this.awareness.getStates().keys()).filter((client) => client !== this.doc.clientID),
-			this,
+			this
 		);
 		if (this._resyncInterval !== 0) {
 			clearInterval(this._resyncInterval);

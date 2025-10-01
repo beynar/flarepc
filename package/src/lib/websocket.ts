@@ -41,6 +41,7 @@ export class WebSocketClient<I extends Router = Router, O extends Router = Route
 	private pingTimer?: any;
 	private pongTimer?: any;
 	private wsPromises = new Map<string, (value: any) => any>();
+	private shouldReconnect = true;
 
 	opts: ConnectOptions<O>;
 	url: string;
@@ -49,11 +50,13 @@ export class WebSocketClient<I extends Router = Router, O extends Router = Route
 	presence: Participant[] = [];
 
 	private startPingPong() {
+		this.stopPingPong();
 		this.pingTimer = setInterval(() => {
 			if (this.ws?.readyState === WebSocket.OPEN) {
 				this.ws.send('ping');
+				if (this.pongTimer) clearTimeout(this.pongTimer);
 				this.pongTimer = setTimeout(() => {
-					this.reconnect();
+					if (this.shouldReconnect) this.reconnect();
 				}, this.pongTimeout);
 			}
 		}, this.pingInterval);
@@ -76,7 +79,11 @@ export class WebSocketClient<I extends Router = Router, O extends Router = Route
 	};
 
 	destroy = () => {
-		this.ws?.close();
+		this.shouldReconnect = false;
+		(globalThis as any).removeEventListener('beforeunload', this.destroy);
+		(globalThis as any).__flarews?.delete(this.url);
+		this.stopPingPong();
+		this.ws?.close(1000, 'client closing');
 		this.abortController?.abort();
 		this.emit('close', []);
 		this.setState('CLOSED');
@@ -102,6 +109,7 @@ export class WebSocketClient<I extends Router = Router, O extends Router = Route
 	};
 	private reconnect = async () => {
 		if (this.state === 'RECONNECTING') return;
+		this.ws?.close(); // ensure old socket closes
 		this.ws = null;
 		this.setState('RECONNECTING');
 		let attempts = 0;
@@ -111,12 +119,12 @@ export class WebSocketClient<I extends Router = Router, O extends Router = Route
 			try {
 				await this.open();
 			} catch (error) {
-				console.log(`Reconnection attempt ${attempts + 1} failed:`, error);
+				console.error(`Reconnection attempt ${attempts + 1} failed:`, error);
 				attempts++;
 			}
 		}
 		if (attempts === this.maxReconnectAttempts) {
-			console.log(`closing after ${attempts} attempts`);
+			console.error(`closing after ${attempts} attempts`);
 			this.emit('reconnectionFailed', []);
 			this.destroy();
 		}
@@ -137,7 +145,6 @@ export class WebSocketClient<I extends Router = Router, O extends Router = Route
 			const signal = {
 				signal: this.abortController.signal,
 			};
-			console.log('this.url', this.url);
 			this.ws = new WebSocket(this.url);
 			(this.ws as any).binaryType = 'arraybuffer';
 
@@ -146,7 +153,7 @@ export class WebSocketClient<I extends Router = Router, O extends Router = Route
 				() => {
 					this.setState('CONNECTED');
 					while (this.sendQueue.length > 0) {
-						const data = this.sendQueue.pop()!;
+						const data = this.sendQueue.shift()!;
 						this.ws!.send(data);
 					}
 
@@ -154,7 +161,7 @@ export class WebSocketClient<I extends Router = Router, O extends Router = Route
 					this.startPingPong();
 					resolve(this);
 				},
-				signal,
+				signal
 			);
 			this.ws.addEventListener(
 				'close',
@@ -173,12 +180,11 @@ export class WebSocketClient<I extends Router = Router, O extends Router = Route
 					this.stopPingPong();
 					reject(e);
 				},
-				signal,
+				signal
 			);
 			this.ws.addEventListener(
 				'error',
 				(e) => {
-					console.log('error', e);
 					switch (e.message) {
 						case 'ECONNREFUSED':
 							this.reconnect();
@@ -195,7 +201,7 @@ export class WebSocketClient<I extends Router = Router, O extends Router = Route
 					this.stopPingPong();
 					reject(e);
 				},
-				signal,
+				signal
 			);
 			this.ws.addEventListener('message', this.onMessage, signal);
 		});
@@ -256,7 +262,7 @@ export const retrievePreviousClient = <I extends Router, O extends Router>(url: 
 export const createWebSocketConnection = <I extends Router, O extends Router>(
 	url: URL,
 	opts?: ConnectOptions<O>,
-	headers?: HeadersInit,
+	headers?: HeadersInit
 ): Promise<WebSocketClient<I, O>> => {
 	return new Promise((resolve, reject) => {
 		if (headers || opts?.headers) {
@@ -271,7 +277,7 @@ export const createWebSocketConnection = <I extends Router, O extends Router>(
 		const previousClient = opts?.dedupeConnection !== false && retrievePreviousClient<I, O>(endpoint);
 		const client = previousClient || new WebSocketClient<I, O>(endpoint, opts);
 		if (!previousClient) {
-			client.open().then(() => {
+			return client.open().then(() => {
 				resolve(client);
 			});
 		}
@@ -290,7 +296,7 @@ export type DocOptions<O extends Router> = ConnectOptions<O> & DocProviderOption
 export const createDocumentConnection = <I extends Router, O extends Router>(
 	url: URL,
 	PROVIDER: DocProviderConstructor<O>,
-	opts: DocOptions<O> = {},
+	opts: DocOptions<O> = {}
 ): Promise<{ doc: DocProvider['doc']; awareness: DocProvider['awareness']; client: WebSocketClient<I, O> }> => {
 	return new Promise(async (resolve, reject) => {
 		try {

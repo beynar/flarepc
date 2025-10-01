@@ -10,16 +10,16 @@
 		"cron": "curl 'http://localhost:8080/__scheduled?cron=0*****'"
 	},
 	"dependencies": {
-		"@electric-sql/pglite": "^0.2.17",
-		"arktype": "2.0.4",
+		"@electric-sql/pglite": "^0.3.7",
+		"arktype": "2.1.20",
 		"flarepc": "workspace:*",
-		"groq-sdk": "^0.5.0",
-		"valibot": "1.0.0-rc.1",
-		"zod": "^3.24.2"
+		"groq-sdk": "^0.30.0",
+		"valibot": "1.1.0",
+		"zod": "^4.0.15"
 	},
 	"devDependencies": {
-		"@cloudflare/workers-types": "^4.20250214.0",
-		"typescript": "^5.7.3",
-		"wrangler": "^3.109.2"
+		"@cloudflare/workers-types": "^4.20250807.0",
+		"typescript": "^5.9.2",
+		"wrangler": "^4.28.1"
 	}
 }

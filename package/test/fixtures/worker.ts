@@ -13,13 +13,13 @@ declare global {
 declare module '../../src/lib' {
 	interface Register {
 		Env: Env;
-		Tags: 'ADMIN' | 'MENTOR' | 'USER';
+		// Tags: 'ADMIN' | 'MENTOR' | 'USER';
 		Locals: {
 			test: true;
 		};
 		Participant: {
 			id: string;
-			name: string;
+			// name: string;
 		};
 		Queues: {
 			Queue: typeof Queue;
@@ -156,7 +156,7 @@ const publicRouter = {
 				email: z.string().email(),
 				age: z.number().min(18).max(100),
 				preferences: z.array(z.string()),
-			}),
+			})
 		)
 		.handle(async ({ input }) => {
 			return {
@@ -226,7 +226,7 @@ const publicRouter = {
 					JSON.stringify({
 						error: 'File too large',
 						maxSize: '5MB',
-					}),
+					})
 				);
 			}
 

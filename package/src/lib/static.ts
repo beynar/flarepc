@@ -32,21 +32,21 @@ type ReturnTypeOfKV<T extends KVGetType> =
 	| (T extends 'text'
 			? string
 			: T extends 'arrayBuffer'
-				? ArrayBuffer
-				: T extends 'file'
-					? File
-					: T extends 'blob'
-						? Blob
-						: T extends 'json'
-							? unknown
-							: T extends 'stream'
-								? ReadableStream
-								: never)
+			? ArrayBuffer
+			: T extends 'file'
+			? File
+			: T extends 'blob'
+			? Blob
+			: T extends 'json'
+			? unknown
+			: T extends 'stream'
+			? ReadableStream
+			: never)
 	| null;
 
 const formatETag = (
 	entityId: string,
-	validatorType: string = 'strong',
+	validatorType: string = 'strong'
 	// entityId: string = pathKey,
 	// validatorType: string = options.defaultETag
 ) => {
@@ -89,7 +89,7 @@ export class StaticHandler {
 			if (!this.manifest) {
 				throw error(
 					'BAD_REQUEST',
-					`Static Handler not initialized. add\n[site]\nbucket="./public"\nto your wrangler.toml and put some files in ./public directory`,
+					`Static Handler not initialized. add\n[site]\nbucket="./public"\nto your wrangler.toml and put some files in ./public directory`
 				);
 			}
 		}
@@ -116,7 +116,7 @@ export class StaticHandler {
 		const cacheControl = Object.assign(
 			{},
 			defaultCacheControl,
-			typeof this.options.cacheControl === 'function' ? this.options.cacheControl(request) : this.options.cacheControl,
+			typeof this.options.cacheControl === 'function' ? this.options.cacheControl(request) : this.options.cacheControl
 		);
 
 		if (cacheControl.bypassCache || cacheControl.edgeTTL === null || request.method == 'HEAD') {
@@ -211,12 +211,13 @@ export class StaticHandler {
 
 		try {
 			const path = manifest[key];
+
 			if (!path) {
 				throw error('NOT_FOUND');
 			}
+
 			const asset = await this.kv!.get(path, {
-				// @ts-ignore
-				type: type === 'file' || type === 'blob' ? 'arrayBuffer' : type,
+				type: (type === 'file' || type === 'blob' ? 'arrayBuffer' : type) as any,
 			});
 			if (!asset) {
 				return null;
